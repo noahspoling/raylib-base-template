@@ -11,6 +11,14 @@ int main(void) {
     ECS *ecs = ECS_new(arena);
 
     InitWindow(GAME_WIDTH, GAME_HEIGHT, GAME_TITLE);
+    if (!IsWindowReady()) {
+        // GL context creation failed (e.g. broken/mismatched driver). Bail
+        // cleanly instead of running the loop against an uninitialized window.
+        TraceLog(LOG_ERROR, "window failed to initialize; aborting");
+        ECS_destroy(ecs);
+        Arena_dispose(&arena);
+        return 1;
+    }
 #if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
     // run scripts may exec the binary from any cwd; assets/ sits next to it.
     ChangeDirectory(GetApplicationDirectory());
