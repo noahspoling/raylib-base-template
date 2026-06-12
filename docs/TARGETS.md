@@ -58,7 +58,23 @@ Workspace hint: [tools/scripts/install_emscripten.sh](../../../tools/scripts/ins
 # or: cmake --preset android-ndk && cmake --build --preset android-ndk
 ```
 
-The game is built as **`add_library(... SHARED)`** so it can be loaded like a typical raylib Android native library. You still need an **APK / Gradle / AndroidManifest** that hosts NativeActivity and ships assets; raylib wraps `fopen` for asset paths when linked as on Android.
+The game is built as **`add_library(... SHARED)`** so it can be loaded like a typical raylib Android native library.
+
+### Gradle client (APK)
+
+Every project created from this template ships a ready Gradle client in **`android/`** (NativeActivity host, `applicationId com.gramarye.<name>`, splash theme on Android 12+). The package name, app label, and `System.loadLibrary` name are filled in by `tools/new_project.sh`.
+
+```bash
+cd <project>/android
+./gradlew assembleDebug        # builds the C code via externalNativeBuild + packages the APK
+./gradlew installDebug         # deploy to a connected device
+```
+
+Or open `<project>/android/` in Android Studio. Assets in `<project>/assets/` are packaged into the APK automatically (`assets.srcDirs` includes `../../assets`); raylib loads them through `AAssetManager` with paths relative to the assets root.
+
+Machine-specific notes:
+- `app/build.gradle.kts` passes `-DCMAKE_MAKE_PROGRAM=/usr/bin/ninja`; adjust if ninja lives elsewhere on your machine.
+- Set your JDK via `JAVA_HOME` or Android Studio, **not** by committing `org.gradle.java.home` to `gradle.properties`.
 
 ---
 

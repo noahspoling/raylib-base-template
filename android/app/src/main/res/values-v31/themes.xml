@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+ system splash, shown while NativeActivity loads the game .so.
+         Replace windowSplashScreenAnimatedIcon with a drawable to brand it. -->
+    <style name="Theme.GramaryeSplash" parent="android:Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowSplashScreenBackground">#000000</item>
+    </style>
+</resources>

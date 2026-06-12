@@ -7,13 +7,13 @@
   },
   "configurePresets": [
     {
-      "name": "template-base",
+      "name": "base",
       "hidden": true,
       "binaryDir": "${sourceDir}/build/${presetName}"
     },
     {
       "name": "linux-desktop",
-      "inherits": "template-base",
+      "inherits": "base",
       "displayName": "Desktop (Linux)",
       "cacheVariables": {
         "GRAMARYE_TARGET": "desktop"
@@ -21,7 +21,7 @@
     },
     {
       "name": "macos-desktop",
-      "inherits": "template-base",
+      "inherits": "base",
       "displayName": "Desktop (macOS)",
       "cacheVariables": {
         "GRAMARYE_TARGET": "desktop"
@@ -29,7 +29,7 @@
     },
     {
       "name": "web-wasm",
-      "inherits": "template-base",
+      "inherits": "base",
       "displayName": "Web (Emscripten)",
       "cacheVariables": {
         "GRAMARYE_TARGET": "web"
@@ -38,7 +38,7 @@
     },
     {
       "name": "android-ndk",
-      "inherits": "template-base",
+      "inherits": "base",
       "displayName": "Android (NDK)",
       "cacheVariables": {
         "GRAMARYE_TARGET": "android",
@@ -49,7 +49,7 @@
     },
     {
       "name": "macos-gles-angle",
-      "inherits": "template-base",
+      "inherits": "base",
       "displayName": "macOS OpenGL ES 2 + ANGLE (link ANGLE yourself)",
       "cacheVariables": {
         "GRAMARYE_TARGET": "macos_gles_angle"

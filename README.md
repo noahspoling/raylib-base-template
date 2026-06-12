@@ -18,6 +18,6 @@ Use **`games/<name>`**, **`tools/<name>`**, or **`templates/<id>`** for `<projec
 See **[docs/TARGETS.md](docs/TARGETS.md)** for `GRAMARYE_TARGET`, CMake presets, and helper scripts:
 
 - `./scripts/build_web.sh <project>` — Emscripten / WebAssembly
-- `./scripts/build_android.sh <project>` — Android NDK (shared library)
+- `./scripts/build_android.sh <project>` — Android NDK (shared library only); for an installable APK use the bundled Gradle client: `cd <project>/android && ./gradlew assembleDebug`
 - `./scripts/build_macos_gles_angle.sh <project>` — macOS OpenGL ES 2 + ANGLE (host must be Darwin)
 - **[mobile/README-ios.md](mobile/README-ios.md)** — Xcode-first iOS (no CMake preset upstream)

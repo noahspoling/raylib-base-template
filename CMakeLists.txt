@@ -61,6 +61,24 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(gramarye_ecs)
 
+# Lua 5.4 (scripting layer): walterschell/Lua wraps upstream sources in plain
+# CMake, so the active toolchain (NDK, Emscripten, desktop) applies as-is.
+set(LUA_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
+set(LUA_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+set(LUA_BUILD_BINARY OFF CACHE BOOL "" FORCE)
+set(LUA_BUILD_COMPILER OFF CACHE BOOL "" FORCE)
+# Upstream declares cmake_minimum_required 3.1, which CMake 4+ refuses;
+# this floor only applies to subprojects that declare an older minimum.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+FetchContent_Declare(
+    lua
+    GIT_REPOSITORY "https://github.com/walterschell/Lua.git"
+    GIT_TAG "v5.4.7"
+    GIT_PROGRESS TRUE
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(lua)
+
 # Raylib: set cache before FetchContent so raylib's CMake sees them.
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
@@ -112,10 +130,28 @@ target_link_libraries(${GRAMARYE_APP_NAME} PRIVATE
     gramarye-libcore
     gramarye-ecs
     raylib
+    lua_static
 )
 
+# Assets (Lua scenes, textures, ...) live in <project>/assets.
+#  - desktop/macos: copied next to the binary; main.c pins cwd to the exe dir.
+#  - web: preloaded into MEMFS at /assets.
+#  - android: packaged into the APK by gradle (assets.srcDirs includes ../../assets).
 if(GRAMARYE_TARGET STREQUAL "web")
     target_link_options(${GRAMARYE_APP_NAME} PRIVATE
         "-sALLOW_MEMORY_GROWTH=1"
+        "--preload-file=${CMAKE_CURRENT_SOURCE_DIR}/assets@assets"
+    )
+elseif(NOT GRAMARYE_TARGET STREQUAL "android")
+    add_custom_command(TARGET ${GRAMARYE_APP_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+            "$<TARGET_FILE_DIR:${GRAMARYE_APP_NAME}>/assets"
+    )
+endif()
+
+if(GRAMARYE_TARGET STREQUAL "android")
+    target_link_options(${GRAMARYE_APP_NAME} PRIVATE
+        "-u" "ANativeActivity_onCreate"
     )
 endif()

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base theme; values-v31/themes.xml overrides it with splash attributes on Android 12+. -->
+    <style name="Theme.GramaryeSplash" parent="android:Theme.DeviceDefault.NoActionBar" />
+</resources>

@@ -4,13 +4,17 @@
 
 #include "game_config.h"
 #include "global_system.h"
-#include "scene.h"
+#include "script_host.h"
 
 int main(void) {
     Arena_T arena = Arena_new();
     ECS *ecs = ECS_new(arena);
 
-    InitWindow(GAME_WIDTH, GAME_HEIGHT, __PROJECT_NAME__);
+    InitWindow(GAME_WIDTH, GAME_HEIGHT, GAME_TITLE);
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+    // run scripts may exec the binary from any cwd; assets/ sits next to it.
+    ChangeDirectory(GetApplicationDirectory());
+#endif
     SetTargetFPS(60);
 
     GlobalState *global_state = (GlobalState *)Arena_alloc(arena, sizeof(GlobalState), __FILE__, __LINE__);
@@ -23,8 +27,9 @@ int main(void) {
         .zoom = 1.0f
     };
 
-    Scene *base_scene = Scene_new(arena, "base");
-    Scene_add_system(base_scene, global_system_register(ecs, global_state));
+    ScriptHost *host = ScriptHost_new(arena, ecs, global_state);
+    ScriptHost_register_system(host, "global", global_system_register(ecs, global_state));
+    ScriptHost_load_scene(host, "splash");
 
     double last_time = GetTime();
     while (!WindowShouldClose()) {
@@ -32,14 +37,15 @@ int main(void) {
         float dt = (float)(now - last_time);
         last_time = now;
 
-        Scene_run(base_scene, ecs, dt);
+        ScriptHost_update(host, dt);
 
         BeginDrawing();
         ClearBackground(BLACK);
-        DrawText("Template loop running", 24, 24, 24, RAYWHITE);
+        ScriptHost_draw(host);
         EndDrawing();
     }
 
+    ScriptHost_dispose(host);
     CloseWindow();
     ECS_destroy(ecs);
     Arena_dispose(&arena);
