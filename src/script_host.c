@@ -19,6 +19,7 @@
 
 #define SCRIPT_HOST_MAX_SYSTEMS 32
 #define SCRIPT_HOST_NAME_MAX 64
+#define SCRIPT_HOST_MAX_STACK 8
 
 static const char *HOST_REGISTRY_KEY = "gramarye.host";
 static const char *LOADED_REGISTRY_KEY = "gramarye.loaded";
@@ -28,17 +29,37 @@ typedef struct {
     SystemId id;
 } RegisteredSystem;
 
+// One live scene. Suspended scenes (below the stack top) keep their Lua table
+// ref and C system list so push/pop preserves scene state; only the top entry
+// updates and draws. update/draw hook refs are cached at load time so the hot
+// path is a lua_rawgeti, not a per-frame string lookup.
+typedef struct SceneEntry {
+    char name[SCRIPT_HOST_NAME_MAX];
+    int scene_ref;
+    int update_ref;
+    int draw_ref;
+    Scene scene;
+} SceneEntry;
+
+typedef enum {
+    PENDING_NONE = 0,
+    PENDING_CHANGE,
+    PENDING_PUSH,
+    PENDING_POP
+} PendingOp;
+
 struct ScriptHost {
-    Arena_T arena;
+    Arena_T arena;        // persistent (engine lifetime)
+    Arena_T scene_arena;  // rewound on full scene change
     ECS *ecs;
     GlobalState *global_state;
     lua_State *L;
 
-    Scene *active_scene;
-    int scene_ref;
-    char current_scene[SCRIPT_HOST_NAME_MAX];
+    SceneEntry stack[SCRIPT_HOST_MAX_STACK];
+    size_t depth;
+
+    PendingOp pending;
     char pending_scene[SCRIPT_HOST_NAME_MAX];
-    bool has_pending;
 
     RegisteredSystem systems[SCRIPT_HOST_MAX_SYSTEMS];
     size_t system_count;
@@ -69,21 +90,13 @@ static ScriptHost *host_from(lua_State *L) {
     return host;
 }
 
+static SceneEntry *top(ScriptHost *host) {
+    return host->depth > 0 ? &host->stack[host->depth - 1] : NULL;
+}
+
 // ---------------------------------------------------------------------------
 // Hook dispatch
 // ---------------------------------------------------------------------------
-
-static bool push_hook(ScriptHost *host, const char *hook) {
-    if (host->scene_ref == LUA_NOREF || host->script_error) return false;
-    lua_rawgeti(host->L, LUA_REGISTRYINDEX, host->scene_ref);
-    lua_getfield(host->L, -1, hook);
-    lua_remove(host->L, -2);
-    if (!lua_isfunction(host->L, -1)) {
-        lua_pop(host->L, 1);
-        return false;
-    }
-    return true;
-}
 
 // Expects the function and its nargs arguments on top of the stack.
 static void pcall_hook(ScriptHost *host, int nargs) {
@@ -98,8 +111,19 @@ static void pcall_hook(ScriptHost *host, int nargs) {
     lua_remove(L, func_idx);
 }
 
-static void call_hook0(ScriptHost *host, const char *hook) {
-    if (push_hook(host, hook)) pcall_hook(host, 0);
+// Rare hooks (on_enter/on_exit/on_pause/on_resume) are looked up by name.
+// Skipped while the entry is in an error state: its Lua state is unknown, so
+// calling into it risks cascading errors (documented in SCRIPTING.md).
+static void call_hook0(ScriptHost *host, SceneEntry *entry, const char *hook) {
+    if (!entry || entry->scene_ref == LUA_NOREF || host->script_error) return;
+    lua_rawgeti(host->L, LUA_REGISTRYINDEX, entry->scene_ref);
+    lua_getfield(host->L, -1, hook);
+    lua_remove(host->L, -2);
+    if (!lua_isfunction(host->L, -1)) {
+        lua_pop(host->L, 1);
+        return;
+    }
+    pcall_hook(host, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -136,16 +160,32 @@ static bool run_file(ScriptHost *host, const char *path) {
     return true;
 }
 
-static bool do_load_scene(ScriptHost *host, const char *name) {
-    lua_State *L = host->L;
+// ---------------------------------------------------------------------------
+// Scene stack operations
+// ---------------------------------------------------------------------------
 
-    call_hook0(host, "on_exit");
-    if (host->scene_ref != LUA_NOREF) {
-        luaL_unref(L, LUA_REGISTRYINDEX, host->scene_ref);
-        host->scene_ref = LUA_NOREF;
+static int cache_hook_ref(lua_State *L, const char *hook) {
+    lua_getfield(L, -1, hook);  // scene table at -1
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return LUA_NOREF;
     }
-    host->script_error = false;
-    host->error_message[0] = '\0';
+    return luaL_ref(L, LUA_REGISTRYINDEX);
+}
+
+static void entry_unref(ScriptHost *host, SceneEntry *entry) {
+    lua_State *L = host->L;
+    if (entry->scene_ref != LUA_NOREF)  luaL_unref(L, LUA_REGISTRYINDEX, entry->scene_ref);
+    if (entry->update_ref != LUA_NOREF) luaL_unref(L, LUA_REGISTRYINDEX, entry->update_ref);
+    if (entry->draw_ref != LUA_NOREF)   luaL_unref(L, LUA_REGISTRYINDEX, entry->draw_ref);
+    entry->scene_ref = entry->update_ref = entry->draw_ref = LUA_NOREF;
+    entry->name[0] = '\0';
+}
+
+// Loads scenes/<name>.lua into *entry (refs + Scene). Does not call on_enter.
+static bool load_into_entry(ScriptHost *host, SceneEntry *entry, const char *name) {
+    lua_State *L = host->L;
+    entry->scene_ref = entry->update_ref = entry->draw_ref = LUA_NOREF;
 
     char path[192];
     snprintf(path, sizeof(path), "%sscripts/scenes/%s.lua", ASSET_PREFIX, name);
@@ -159,15 +199,70 @@ static bool do_load_scene(ScriptHost *host, const char *name) {
         return false;
     }
 
-    snprintf(host->current_scene, sizeof(host->current_scene), "%s", name);
-    // Scene keeps the name pointer; copy it into arena memory that outlives us.
-    size_t len = strlen(host->current_scene) + 1;
-    char *scene_name = (char *)Arena_alloc(host->arena, len, __FILE__, __LINE__);
-    memcpy(scene_name, host->current_scene, len);
-    host->active_scene = Scene_new(host->arena, scene_name);
+    snprintf(entry->name, sizeof(entry->name), "%s", name);
+    Scene_init(&entry->scene, entry->name);
 
-    host->scene_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    call_hook0(host, "on_enter");
+    entry->update_ref = cache_hook_ref(L, "on_update");
+    entry->draw_ref = cache_hook_ref(L, "on_draw");
+    entry->scene_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    return true;
+}
+
+// Full transition: exits and unrefs the whole stack, rewinds the scene arena,
+// loads <name> as the sole entry.
+static bool do_change(ScriptHost *host, const char *name) {
+    while (host->depth > 0) {
+        SceneEntry *e = top(host);
+        call_hook0(host, e, "on_exit");
+        entry_unref(host, e);
+        host->depth--;
+    }
+    host->script_error = false;
+    host->error_message[0] = '\0';
+    Arena_free(host->scene_arena);
+
+    SceneEntry *entry = &host->stack[0];
+    if (!load_into_entry(host, entry, name)) return false;
+    host->depth = 1;
+    call_hook0(host, entry, "on_enter");
+    return !host->script_error;
+}
+
+static bool do_push(ScriptHost *host, const char *name) {
+    if (host->depth >= SCRIPT_HOST_MAX_STACK) {
+        TraceLog(LOG_WARNING, "SCRIPT: scene stack full (%d), ignoring push('%s')",
+                 SCRIPT_HOST_MAX_STACK, name);
+        return false;
+    }
+    SceneEntry *below = top(host);
+    call_hook0(host, below, "on_pause");
+
+    SceneEntry *entry = &host->stack[host->depth];
+    if (!load_into_entry(host, entry, name)) {
+        // Failed to enter the new scene; resume the one we paused. The error
+        // screen shows until the next successful transition or F5.
+        call_hook0(host, below, "on_resume");
+        return false;
+    }
+    host->depth++;
+    call_hook0(host, entry, "on_enter");
+    return !host->script_error;
+}
+
+static bool do_pop(ScriptHost *host) {
+    if (host->depth <= 1) {
+        TraceLog(LOG_WARNING, "SCRIPT: cannot pop the last scene");
+        return false;
+    }
+    SceneEntry *e = top(host);
+    call_hook0(host, e, "on_exit");
+    entry_unref(host, e);
+    host->depth--;
+    // Popping an errored scene discards its error state; the scene below is
+    // presumed healthy.
+    host->script_error = false;
+    host->error_message[0] = '\0';
+    call_hook0(host, top(host), "on_resume");
     return !host->script_error;
 }
 
@@ -182,6 +277,18 @@ static int l_log(lua_State *L) {
 
 static int l_require(lua_State *L) {
     const char *mod = luaL_checkstring(L, 1);
+
+    // "gramarye.*" modules are shipped embedded in the gramarye-ui binary and
+    // registered in package.preload by GramaryeUI_register_lua. Resolve them via
+    // the standard require so the library's versioned Lua layer loads with no
+    // filesystem access; game-local modules keep loading from assets/ below.
+    if (strncmp(mod, "gramarye.", 9) == 0) {
+        lua_getglobal(L, "require");
+        lua_pushvalue(L, 1);
+        lua_call(L, 1, 1);
+        return 1;
+    }
+
     lua_getfield(L, LUA_REGISTRYINDEX, LOADED_REGISTRY_KEY);
     lua_getfield(L, -1, mod);
     if (!lua_isnil(L, -1)) {
@@ -211,13 +318,28 @@ static int l_require(lua_State *L) {
 }
 
 static int l_scene_change(lua_State *L) {
-    ScriptHost *host = host_from(L);
-    ScriptHost_request_scene(host, luaL_checkstring(L, 1));
+    ScriptHost_request_scene(host_from(L), luaL_checkstring(L, 1));
+    return 0;
+}
+
+static int l_scene_push(lua_State *L) {
+    ScriptHost_request_push(host_from(L), luaL_checkstring(L, 1));
+    return 0;
+}
+
+static int l_scene_pop(lua_State *L) {
+    ScriptHost_request_pop(host_from(L));
     return 0;
 }
 
 static int l_scene_current(lua_State *L) {
-    lua_pushstring(L, host_from(L)->current_scene);
+    SceneEntry *e = top(host_from(L));
+    lua_pushstring(L, e ? e->name : "");
+    return 1;
+}
+
+static int l_scene_depth(lua_State *L) {
+    lua_pushinteger(L, (lua_Integer)host_from(L)->depth);
     return 1;
 }
 
@@ -233,7 +355,9 @@ static int l_systems_add(lua_State *L) {
     const char *name = luaL_checkstring(L, 1);
     RegisteredSystem *sys = find_system(host, name);
     if (!sys) return luaL_error(L, "unknown system '%s' (register it from C first)", name);
-    Scene_add_system(host->active_scene, sys->id);
+    SceneEntry *e = top(host);
+    if (!e) return luaL_error(L, "systems.add('%s') with no active scene", name);
+    Scene_add_system(&e->scene, sys->id);
     return 0;
 }
 
@@ -268,11 +392,22 @@ static int key_from_name(const char *name) {
     return 0;
 }
 
+// Accepts a key id (from gramarye.input.key) or a key name. Resolve names
+// once in on_enter and pass the id in hot paths to skip the string compares.
 static int checkkey(lua_State *L) {
+    if (lua_type(L, 1) == LUA_TNUMBER) return (int)lua_tointeger(L, 1);
     const char *name = luaL_checkstring(L, 1);
     int key = key_from_name(name);
     if (key == 0) return luaL_error(L, "unknown key name '%s'", name);
     return key;
+}
+
+static int l_input_key(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+    int key = key_from_name(name);
+    if (key == 0) return luaL_error(L, "unknown key name '%s'", name);
+    lua_pushinteger(L, key);
+    return 1;
 }
 
 static int l_input_key_pressed(lua_State *L) {
@@ -315,6 +450,10 @@ static Color opt_color(lua_State *L, int idx, Color def) {
     return c;
 }
 
+// gramarye.draw.* stays immediate-mode on purpose: on_draw runs inside
+// BeginDrawing and raylib batches via rlgl, so a Lua->C command buffer would
+// add a copy with no batching gain. Bulk drawing belongs in C systems
+// (see systems/sprite); these are prototyping helpers.
 static int l_draw_text(lua_State *L) {
     const char *text = luaL_checkstring(L, 1);
     int x = (int)luaL_checkinteger(L, 2);
@@ -348,6 +487,31 @@ static int l_time_frames(lua_State *L) {
     return 1;
 }
 
+// ---------------------------------------------------------------------------
+// Demo data source — stands in for a game's C/ECS-owned data. The UI's List/Grid
+// pull rows from here by index; the full dataset never lives in Lua. A real game
+// would back these with its own components and do its sorting/filtering in C.
+// ---------------------------------------------------------------------------
+
+#define DEMO_ROW_COUNT 500
+
+static int l_demo_count(lua_State *L) {
+    lua_pushinteger(L, DEMO_ROW_COUNT);
+    return 1;
+}
+
+// gramarye.demo.row(i) -> name, value   (i is 1-based, matching the List API)
+static int l_demo_row(lua_State *L) {
+    int i = (int)luaL_checkinteger(L, 1);
+    if (i < 1 || i > DEMO_ROW_COUNT) { lua_pushnil(L); lua_pushnil(L); return 2; }
+    char name[32], value[16];
+    snprintf(name, sizeof(name), "Unit %03d", i);
+    snprintf(value, sizeof(value), "%d hp", (i * 37) % 100 + 1);  // "processed" in C
+    lua_pushstring(L, name);
+    lua_pushstring(L, value);
+    return 2;
+}
+
 static void install_module(lua_State *L, const char *module, const luaL_Reg *fns) {
     // gramarye table on stack top
     lua_newtable(L);
@@ -363,7 +527,10 @@ static void install_bindings(lua_State *L) {
     };
     static const luaL_Reg scene_fns[] = {
         {"change", l_scene_change},
+        {"push", l_scene_push},
+        {"pop", l_scene_pop},
         {"current", l_scene_current},
+        {"depth", l_scene_depth},
         {NULL, NULL}
     };
     static const luaL_Reg systems_fns[] = {
@@ -372,6 +539,7 @@ static void install_bindings(lua_State *L) {
         {NULL, NULL}
     };
     static const luaL_Reg input_fns[] = {
+        {"key", l_input_key},
         {"key_pressed", l_input_key_pressed},
         {"key_down", l_input_key_down},
         {"mouse_pressed", l_input_mouse_pressed},
@@ -390,14 +558,25 @@ static void install_bindings(lua_State *L) {
         {"frames", l_time_frames},
         {NULL, NULL}
     };
+    static const luaL_Reg demo_fns[] = {
+        {"count", l_demo_count},
+        {"row", l_demo_row},
+        {NULL, NULL}
+    };
 
     lua_newtable(L);
     luaL_setfuncs(L, root_fns, 0);
+    // Platform asset prefix, so the shared Lua layer can build correct texture
+    // paths (gramarye-ui itself is asset-model-agnostic). "" on Android, "assets/"
+    // elsewhere — matches l_require's path construction.
+    lua_pushstring(L, ASSET_PREFIX);
+    lua_setfield(L, -2, "asset_prefix");
     install_module(L, "scene", scene_fns);
     install_module(L, "systems", systems_fns);
     install_module(L, "input", input_fns);
     install_module(L, "draw", draw_fns);
     install_module(L, "time", time_fns);
+    install_module(L, "demo", demo_fns);
     lua_setglobal(L, "gramarye");
 }
 
@@ -411,12 +590,16 @@ ScriptHost *ScriptHost_new(Arena_T arena, ECS *ecs, GlobalState *global_state) {
     if (!host) return NULL;
     memset(host, 0, sizeof(*host));
     host->arena = arena;
+    host->scene_arena = Arena_new();
     host->ecs = ecs;
     host->global_state = global_state;
-    host->scene_ref = LUA_NOREF;
+    if (global_state) global_state->scene_arena = host->scene_arena;
 
     host->L = luaL_newstate();
     luaL_openlibs(host->L);
+    // Generational GC: the per-frame workload (UI tables, closures) is almost
+    // entirely short-lived garbage, which the minor collector reclaims cheaply.
+    lua_gc(host->L, LUA_GCGEN, 0, 0);
 
     lua_pushlightuserdata(host->L, host);
     lua_setfield(host->L, LUA_REGISTRYINDEX, HOST_REGISTRY_KEY);
@@ -428,9 +611,18 @@ ScriptHost *ScriptHost_new(Arena_T arena, ECS *ecs, GlobalState *global_state) {
 }
 
 void ScriptHost_dispose(ScriptHost *host) {
-    if (!host || !host->L) return;
-    lua_close(host->L);
-    host->L = NULL;
+    if (!host) return;
+    if (host->L) {
+        lua_close(host->L);
+        host->L = NULL;
+    }
+    if (host->scene_arena) {
+        Arena_dispose(&host->scene_arena);
+    }
+}
+
+Arena_T ScriptHost_scene_arena(ScriptHost *host) {
+    return host ? host->scene_arena : NULL;
 }
 
 void ScriptHost_register_system(ScriptHost *host, const char *name, SystemId id) {
@@ -469,37 +661,99 @@ void ScriptHost_register_function(ScriptHost *host, const char *module,
 
 bool ScriptHost_load_scene(ScriptHost *host, const char *scene_name) {
     if (!host || !scene_name) return false;
-    return do_load_scene(host, scene_name);
+    return do_change(host, scene_name);
 }
 
 void ScriptHost_request_scene(ScriptHost *host, const char *scene_name) {
     if (!host || !scene_name) return;
     snprintf(host->pending_scene, sizeof(host->pending_scene), "%s", scene_name);
-    host->has_pending = true;
+    host->pending = PENDING_CHANGE;
+}
+
+void ScriptHost_request_push(ScriptHost *host, const char *scene_name) {
+    if (!host || !scene_name) return;
+    snprintf(host->pending_scene, sizeof(host->pending_scene), "%s", scene_name);
+    host->pending = PENDING_PUSH;
+}
+
+void ScriptHost_request_pop(ScriptHost *host) {
+    if (!host) return;
+    host->pending = PENDING_POP;
 }
 
 bool ScriptHost_reload_current(ScriptHost *host) {
-    if (!host || !host->current_scene[0]) return false;
-    TraceLog(LOG_INFO, "SCRIPT: reloading scene '%s'", host->current_scene);
+    SceneEntry *e = host ? top(host) : NULL;
+    if (!e) return false;
+    TraceLog(LOG_INFO, "SCRIPT: reloading scene '%s'", e->name);
+
+    // Drop the game-side module cache so lib/*.lua changes reload too.
+    // package.preload (embedded gramarye.* modules) is untouched.
+    lua_newtable(host->L);
+    lua_setfield(host->L, LUA_REGISTRYINDEX, LOADED_REGISTRY_KEY);
+
+    char name[SCRIPT_HOST_NAME_MAX];
+    snprintf(name, sizeof(name), "%s", e->name);
+
+    call_hook0(host, e, "on_exit");
+    entry_unref(host, e);
     host->script_error = false;
-    return do_load_scene(host, host->current_scene);
+    host->error_message[0] = '\0';
+
+    if (!load_into_entry(host, e, name)) return false;
+    call_hook0(host, e, "on_enter");
+    return !host->script_error;
+}
+
+void ScriptHost_update_fixed(ScriptHost *host, float dt) {
+    if (!host) return;
+    SceneEntry *e = top(host);
+    if (e) Scene_run(&e->scene, host->ecs, dt);
 }
 
 void ScriptHost_update(ScriptHost *host, float dt) {
     if (!host) return;
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
-    if (IsKeyPressed(KEY_F5)) ScriptHost_reload_current(host);
-#endif
-    if (host->active_scene) Scene_run(host->active_scene, host->ecs, dt);
-    if (push_hook(host, "on_update")) {
+    SceneEntry *e = top(host);
+    if (e && e->update_ref != LUA_NOREF && !host->script_error) {
+        lua_rawgeti(host->L, LUA_REGISTRYINDEX, e->update_ref);
         lua_pushnumber(host->L, dt);
         pcall_hook(host, 1);
     }
-    if (host->has_pending) {
-        host->has_pending = false;
+    if (host->pending != PENDING_NONE) {
+        PendingOp op = host->pending;
+        host->pending = PENDING_NONE;
         char next[SCRIPT_HOST_NAME_MAX];
         snprintf(next, sizeof(next), "%s", host->pending_scene);
-        do_load_scene(host, next);
+        switch (op) {
+            case PENDING_CHANGE: do_change(host, next); break;
+            case PENDING_PUSH:   do_push(host, next);   break;
+            case PENDING_POP:    do_pop(host);          break;
+            default: break;
+        }
+    }
+}
+
+// Draws text wrapped to max_w. Tracebacks contain newlines (handled) and long
+// single lines like "assets/scripts/..." (character-wrapped).
+static void draw_wrapped_text(const char *text, int x, int y, int font_size, int max_w) {
+    char line[256];
+    int line_h = font_size + 4;
+    const char *p = text;
+    while (*p) {
+        size_t n = 0;
+        while (p[n] && p[n] != '\n' && n < sizeof(line) - 1) {
+            line[n] = p[n];
+            n++;
+            line[n] = '\0';
+            if (MeasureText(line, font_size) > max_w && n > 1) {
+                n--;
+                line[n] = '\0';
+                break;
+            }
+        }
+        DrawText(line, x, y, font_size, (Color){ 255, 200, 200, 255 });
+        y += line_h;
+        p += n;
+        if (*p == '\n') p++;
     }
 }
 
@@ -508,10 +762,14 @@ void ScriptHost_draw(ScriptHost *host) {
     if (host->script_error) {
         DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), (Color){ 80, 8, 8, 255 });
         DrawText("Lua error (F5 to reload on desktop):", 16, 16, 20, RAYWHITE);
-        DrawText(host->error_message, 16, 48, 10, (Color){ 255, 200, 200, 255 });
+        draw_wrapped_text(host->error_message, 16, 48, 12, GetScreenWidth() - 32);
         return;
     }
-    call_hook0(host, "on_draw");
+    SceneEntry *e = top(host);
+    if (e && e->draw_ref != LUA_NOREF) {
+        lua_rawgeti(host->L, LUA_REGISTRYINDEX, e->draw_ref);
+        pcall_hook(host, 0);
+    }
 }
 
 lua_State *ScriptHost_state(ScriptHost *host) {

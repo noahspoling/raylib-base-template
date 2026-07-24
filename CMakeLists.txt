@@ -40,8 +40,16 @@ file(GLOB_RECURSE PROJECT_HEADERS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
 )
 
-set(GRAMARYE_THREADING ON CACHE BOOL "" FORCE)
+# The game loop is single-threaded, so libcore's locks default to compiled-out
+# no-ops (GRAMARYE_SYNC_SINGLE_THREADED propagates to the ECS built in this
+# tree). Flip ON if the game grows real threads (e.g. async asset loading).
+# Standalone gramarye-ecs builds/tests keep threading ON and stay fully tested.
+option(GRAMARYE_GAME_THREADING "Enable libcore sync primitives (real locks)" OFF)
+set(GRAMARYE_THREADING ${GRAMARYE_GAME_THREADING} CACHE BOOL "" FORCE)
 
+if(EXISTS "${CMAKE_SOURCE_DIR}/libs/gramarye-libcore")
+    set(FETCHCONTENT_SOURCE_DIR_GRAMARYE_LIBCORE "${CMAKE_SOURCE_DIR}/libs/gramarye-libcore" CACHE PATH "" FORCE)
+endif()
 FetchContent_Declare(
     gramarye_libcore
     GIT_REPOSITORY "https://github.com/noahspoling/gramarye-libcore.git"
@@ -52,6 +60,9 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(gramarye_libcore)
 
 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+if(EXISTS "${CMAKE_SOURCE_DIR}/libs/gramarye-ecs")
+    set(FETCHCONTENT_SOURCE_DIR_GRAMARYE_ECS "${CMAKE_SOURCE_DIR}/libs/gramarye-ecs" CACHE PATH "" FORCE)
+endif()
 FetchContent_Declare(
     gramarye_ecs
     GIT_REPOSITORY "https://github.com/noahspoling/gramarye-ecs.git"
@@ -70,6 +81,9 @@ set(LUA_BUILD_COMPILER OFF CACHE BOOL "" FORCE)
 # Upstream declares cmake_minimum_required 3.1, which CMake 4+ refuses;
 # this floor only applies to subprojects that declare an older minimum.
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+if(EXISTS "${CMAKE_SOURCE_DIR}/libs/lua")
+    set(FETCHCONTENT_SOURCE_DIR_LUA "${CMAKE_SOURCE_DIR}/libs/lua" CACHE PATH "" FORCE)
+endif()
 FetchContent_Declare(
     lua
     GIT_REPOSITORY "https://github.com/walterschell/Lua.git"
@@ -100,6 +114,9 @@ else()
     set(OPENGL_VERSION "OFF" CACHE STRING "" FORCE)
 endif()
 
+if(EXISTS "${CMAKE_SOURCE_DIR}/libs/raylib")
+    set(FETCHCONTENT_SOURCE_DIR_RAYLIB "${CMAKE_SOURCE_DIR}/libs/raylib" CACHE PATH "" FORCE)
+endif()
 FetchContent_Declare(
     raylib
     GIT_REPOSITORY "https://github.com/raysan5/raylib.git"
@@ -108,6 +125,23 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(raylib)
+
+# Enable Lua bindings in gramarye-ui (requires lua_static, fetched above).
+set(GRAMARYE_UI_LUA ON CACHE BOOL "" FORCE)
+
+# gramarye-ui (Clay UI). Reuses the raylib target fetched above.
+# Drop a local checkout into libs/gramarye-ui to skip the network fetch.
+if(EXISTS "${CMAKE_SOURCE_DIR}/libs/gramarye-ui")
+    set(FETCHCONTENT_SOURCE_DIR_GRAMARYE_UI "${CMAKE_SOURCE_DIR}/libs/gramarye-ui" CACHE PATH "" FORCE)
+endif()
+FetchContent_Declare(
+    gramarye_ui
+    GIT_REPOSITORY "https://github.com/noahspoling/gramarye-ui.git"
+    GIT_TAG "main"
+    GIT_PROGRESS TRUE
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(gramarye_ui)
 
 if(GRAMARYE_TARGET STREQUAL "android")
     add_library(${GRAMARYE_APP_NAME} SHARED
@@ -131,6 +165,7 @@ target_link_libraries(${GRAMARYE_APP_NAME} PRIVATE
     gramarye-ecs
     raylib
     lua_static
+    gramarye-ui
 )
 
 # Assets (Lua scenes, textures, ...) live in <project>/assets.
@@ -153,5 +188,7 @@ endif()
 if(GRAMARYE_TARGET STREQUAL "android")
     target_link_options(${GRAMARYE_APP_NAME} PRIVATE
         "-u" "ANativeActivity_onCreate"
+        # Required for Google Play (Android 15+): align LOAD segments at 16 KB.
+        "-Wl,-z,max-page-size=16384"
     )
 endif()

@@ -1,0 +1,34 @@
+{
+  "libs": [
+    {
+      "name": "gramarye_libcore",
+      "dir":  "gramarye-libcore",
+      "url":  "https://github.com/noahspoling/gramarye-libcore.git",
+      "tag":  "main"
+    },
+    {
+      "name": "gramarye_ecs",
+      "dir":  "gramarye-ecs",
+      "url":  "https://github.com/noahspoling/gramarye-ecs.git",
+      "tag":  "main"
+    },
+    {
+      "name": "lua",
+      "dir":  "lua",
+      "url":  "https://github.com/walterschell/Lua.git",
+      "tag":  "v5.4.7"
+    },
+    {
+      "name": "raylib",
+      "dir":  "raylib",
+      "url":  "https://github.com/raysan5/raylib.git",
+      "tag":  "master"
+    },
+    {
+      "name": "gramarye_ui",
+      "dir":  "gramarye-ui",
+      "url":  "https://github.com/noahspoling/gramarye-ui.git",
+      "tag":  "main"
+    }
+  ]
+}

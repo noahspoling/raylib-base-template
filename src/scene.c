@@ -1,58 +1,54 @@
 #include "scene.h"
-#include "arena.h"
-#include <stdlib.h>
+#include "raylib.h"
+#include <string.h>
 
-#define SCENE_SYSTEMS_CAP 32
-
-struct Scene {
-    const char *name;
-    SystemId *system_ids;
-    size_t count;
-    size_t capacity;
-};
-
-static int system_priority_cmp(const void *a, const void *b) {
-    const System *sa = *(const System *const *)a;
-    const System *sb = *(const System *const *)b;
-    if (sa->priority < sb->priority) return -1;
-    if (sa->priority > sb->priority) return 1;
-    return 0;
-}
-
-Scene *Scene_new(Arena_T arena, const char *name) {
-    if (!arena || !name) return NULL;
-    Scene *scene = (Scene *)Arena_alloc(arena, sizeof(Scene), __FILE__, __LINE__);
-    if (!scene) return NULL;
+void Scene_init(Scene *scene, const char *name) {
+    if (!scene) return;
+    memset(scene, 0, sizeof(*scene));
     scene->name = name;
-    scene->system_ids = (SystemId *)Arena_alloc(arena, sizeof(SystemId) * SCENE_SYSTEMS_CAP, __FILE__, __LINE__);
-    if (!scene->system_ids) return NULL;
-    scene->count = 0;
-    scene->capacity = SCENE_SYSTEMS_CAP;
-    return scene;
 }
 
 void Scene_add_system(Scene *scene, SystemId id) {
     if (!scene || id == SYSTEM_INVALID) return;
-    if (scene->count >= scene->capacity) return;
+    if (scene->count >= SCENE_MAX_SYSTEMS) {
+        TraceLog(LOG_WARNING, "SCENE: '%s' system list full (%d), dropping system %u",
+                 scene->name ? scene->name : "?", SCENE_MAX_SYSTEMS, id);
+        return;
+    }
     scene->system_ids[scene->count++] = id;
+    scene->dirty = true;
+}
+
+// Rebuild the resolved System* cache, insertion-sorted by priority (stable,
+// n <= SCENE_MAX_SYSTEMS). Runs only when the system set changed.
+static void scene_rebuild_cache(Scene *scene, ECS *ecs) {
+    scene->sorted_count = 0;
+    for (size_t i = 0; i < scene->count; i++) {
+        System *s = ECS_get_system(ecs, scene->system_ids[i]);
+        if (!s) {
+            TraceLog(LOG_WARNING, "SCENE: '%s' references unknown system %u",
+                     scene->name ? scene->name : "?", scene->system_ids[i]);
+            continue;
+        }
+        size_t j = scene->sorted_count;
+        while (j > 0 && scene->sorted[j - 1]->priority > s->priority) {
+            scene->sorted[j] = scene->sorted[j - 1];
+            j--;
+        }
+        scene->sorted[j] = s;
+        scene->sorted_count++;
+    }
+    scene->dirty = false;
 }
 
 void Scene_run(Scene *scene, ECS *ecs, float deltaTime) {
     if (!scene || !ecs || scene->count == 0) return;
+    if (scene->dirty) scene_rebuild_cache(scene, ecs);
 
-    System *systems[32];
-    size_t n = 0;
-    for (size_t i = 0; i < scene->count && n < 32; i++) {
-        System *s = ECS_get_system(ecs, scene->system_ids[i]);
-        if (s && s->enabled && s->updateFunc) {
-            systems[n++] = s;
+    for (size_t i = 0; i < scene->sorted_count; i++) {
+        System *s = scene->sorted[i];
+        if (s->enabled && s->updateFunc) {
+            ECS_update_system(ecs, s->id, deltaTime);
         }
-    }
-    if (n == 0) return;
-
-    qsort(systems, n, sizeof(System *), system_priority_cmp);
-
-    for (size_t i = 0; i < n; i++) {
-        ECS_update_system(ecs, systems[i]->id, deltaTime);
     }
 }

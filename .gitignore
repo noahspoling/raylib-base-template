@@ -1,3 +1,6 @@
+# Local library checkouts (swap in a dev clone without committing it)
+libs/
+
 # Build outputs
 build_*/
 out/
