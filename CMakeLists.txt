@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.27)
 project(__PROJECT_NAME__ C CXX)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 get_filename_component(PROJECT_DIR_NAME "${CMAKE_CURRENT_SOURCE_DIR}" NAME)
 set(GRAMARYE_APP_NAME "${PROJECT_NAME}")
@@ -11,11 +12,6 @@ endif()
 
 include(FetchContent)
 
-# -----------------------------------------------------------------------------
-# Target flavor: drives raylib PLATFORM / OPENGL and Gramarye BUILD_WEB.
-# Valid: desktop | web | android | macos_gles_angle
-# (iOS has no upstream raylib CMake PLATFORM; use mobile/README-ios.md.)
-# -----------------------------------------------------------------------------
 set(GRAMARYE_TARGET "desktop" CACHE STRING "Build flavor: desktop, web, android, macos_gles_angle")
 set_property(CACHE GRAMARYE_TARGET PROPERTY STRINGS desktop web android macos_gles_angle)
 
@@ -40,10 +36,6 @@ file(GLOB_RECURSE PROJECT_HEADERS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
 )
 
-# The game loop is single-threaded, so libcore's locks default to compiled-out
-# no-ops (GRAMARYE_SYNC_SINGLE_THREADED propagates to the ECS built in this
-# tree). Flip ON if the game grows real threads (e.g. async asset loading).
-# Standalone gramarye-ecs builds/tests keep threading ON and stay fully tested.
 option(GRAMARYE_GAME_THREADING "Enable libcore sync primitives (real locks)" OFF)
 set(GRAMARYE_THREADING ${GRAMARYE_GAME_THREADING} CACHE BOOL "" FORCE)
 
@@ -72,14 +64,10 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(gramarye_ecs)
 
-# Lua 5.4 (scripting layer): walterschell/Lua wraps upstream sources in plain
-# CMake, so the active toolchain (NDK, Emscripten, desktop) applies as-is.
 set(LUA_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
 set(LUA_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(LUA_BUILD_BINARY OFF CACHE BOOL "" FORCE)
 set(LUA_BUILD_COMPILER OFF CACHE BOOL "" FORCE)
-# Upstream declares cmake_minimum_required 3.1, which CMake 4+ refuses;
-# this floor only applies to subprojects that declare an older minimum.
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
 if(EXISTS "${CMAKE_SOURCE_DIR}/libs/lua")
     set(FETCHCONTENT_SOURCE_DIR_LUA "${CMAKE_SOURCE_DIR}/libs/lua" CACHE PATH "" FORCE)
@@ -93,7 +81,6 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(lua)
 
-# Raylib: set cache before FetchContent so raylib's CMake sees them.
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
 if(GRAMARYE_TARGET STREQUAL "web")
@@ -126,11 +113,8 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(raylib)
 
-# Enable Lua bindings in gramarye-ui (requires lua_static, fetched above).
 set(GRAMARYE_UI_LUA ON CACHE BOOL "" FORCE)
 
-# gramarye-ui (Clay UI). Reuses the raylib target fetched above.
-# Drop a local checkout into libs/gramarye-ui to skip the network fetch.
 if(EXISTS "${CMAKE_SOURCE_DIR}/libs/gramarye-ui")
     set(FETCHCONTENT_SOURCE_DIR_GRAMARYE_UI "${CMAKE_SOURCE_DIR}/libs/gramarye-ui" CACHE PATH "" FORCE)
 endif()
@@ -168,27 +152,34 @@ target_link_libraries(${GRAMARYE_APP_NAME} PRIVATE
     gramarye-ui
 )
 
-# Assets (Lua scenes, textures, ...) live in <project>/assets.
-#  - desktop/macos: copied next to the binary; main.c pins cwd to the exe dir.
-#  - web: preloaded into MEMFS at /assets.
-#  - android: packaged into the APK by gradle (assets.srcDirs includes ../../assets).
 if(GRAMARYE_TARGET STREQUAL "web")
+    set_target_properties(${GRAMARYE_APP_NAME} PROPERTIES SUFFIX ".html")
     target_link_options(${GRAMARYE_APP_NAME} PRIVATE
         "-sALLOW_MEMORY_GROWTH=1"
         "--preload-file=${CMAKE_CURRENT_SOURCE_DIR}/assets@assets"
+        "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
     )
 elseif(NOT GRAMARYE_TARGET STREQUAL "android")
-    add_custom_command(TARGET ${GRAMARYE_APP_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-            "$<TARGET_FILE_DIR:${GRAMARYE_APP_NAME}>/assets"
-    )
+    if(WIN32)
+        add_custom_command(TARGET ${GRAMARYE_APP_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+                "$<TARGET_FILE_DIR:${GRAMARYE_APP_NAME}>/assets"
+        )
+    else()
+        add_custom_command(TARGET ${GRAMARYE_APP_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E rm -rf
+                "$<TARGET_FILE_DIR:${GRAMARYE_APP_NAME}>/assets"
+            COMMAND ${CMAKE_COMMAND} -E create_symlink
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+                "$<TARGET_FILE_DIR:${GRAMARYE_APP_NAME}>/assets"
+        )
+    endif()
 endif()
 
 if(GRAMARYE_TARGET STREQUAL "android")
     target_link_options(${GRAMARYE_APP_NAME} PRIVATE
         "-u" "ANativeActivity_onCreate"
-        # Required for Google Play (Android 15+): align LOAD segments at 16 KB.
         "-Wl,-z,max-page-size=16384"
     )
 endif()

@@ -9,8 +9,6 @@
 #include <stdio.h>
 #include <string.h>
 
-// Android APK asset paths are relative to the assets root; everywhere else
-// assets/ sits next to the binary (copied by CMake, preloaded on web).
 #if defined(__ANDROID__)
 #define ASSET_PREFIX ""
 #else
@@ -29,10 +27,6 @@ typedef struct {
     SystemId id;
 } RegisteredSystem;
 
-// One live scene. Suspended scenes (below the stack top) keep their Lua table
-// ref and C system list so push/pop preserves scene state; only the top entry
-// updates and draws. update/draw hook refs are cached at load time so the hot
-// path is a lua_rawgeti, not a per-frame string lookup.
 typedef struct SceneEntry {
     char name[SCRIPT_HOST_NAME_MAX];
     int scene_ref;
@@ -49,8 +43,8 @@ typedef enum {
 } PendingOp;
 
 struct ScriptHost {
-    Arena_T arena;        // persistent (engine lifetime)
-    Arena_T scene_arena;  // rewound on full scene change
+    Arena_T arena;
+    Arena_T scene_arena;
     ECS *ecs;
     GlobalState *global_state;
     lua_State *L;
@@ -67,10 +61,6 @@ struct ScriptHost {
     bool script_error;
     char error_message[1024];
 };
-
-// ---------------------------------------------------------------------------
-// Error handling
-// ---------------------------------------------------------------------------
 
 static void set_error(ScriptHost *host, const char *msg) {
     host->script_error = true;
@@ -94,11 +84,6 @@ static SceneEntry *top(ScriptHost *host) {
     return host->depth > 0 ? &host->stack[host->depth - 1] : NULL;
 }
 
-// ---------------------------------------------------------------------------
-// Hook dispatch
-// ---------------------------------------------------------------------------
-
-// Expects the function and its nargs arguments on top of the stack.
 static void pcall_hook(ScriptHost *host, int nargs) {
     lua_State *L = host->L;
     int func_idx = lua_gettop(L) - nargs;
@@ -111,9 +96,6 @@ static void pcall_hook(ScriptHost *host, int nargs) {
     lua_remove(L, func_idx);
 }
 
-// Rare hooks (on_enter/on_exit/on_pause/on_resume) are looked up by name.
-// Skipped while the entry is in an error state: its Lua state is unknown, so
-// calling into it risks cascading errors (documented in SCRIPTING.md).
 static void call_hook0(ScriptHost *host, SceneEntry *entry, const char *hook) {
     if (!entry || entry->scene_ref == LUA_NOREF || host->script_error) return;
     lua_rawgeti(host->L, LUA_REGISTRYINDEX, entry->scene_ref);
@@ -126,11 +108,6 @@ static void call_hook0(ScriptHost *host, SceneEntry *entry, const char *hook) {
     pcall_hook(host, 0);
 }
 
-// ---------------------------------------------------------------------------
-// Chunk loading (raylib file IO -> works on desktop, web MEMFS, android APK)
-// ---------------------------------------------------------------------------
-
-// Loads and runs <path>, leaving its single return value on the stack.
 static bool run_file(ScriptHost *host, const char *path) {
     lua_State *L = host->L;
     char *text = LoadFileText(path);
@@ -160,12 +137,8 @@ static bool run_file(ScriptHost *host, const char *path) {
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// Scene stack operations
-// ---------------------------------------------------------------------------
-
 static int cache_hook_ref(lua_State *L, const char *hook) {
-    lua_getfield(L, -1, hook);  // scene table at -1
+    lua_getfield(L, -1, hook);
     if (!lua_isfunction(L, -1)) {
         lua_pop(L, 1);
         return LUA_NOREF;
@@ -182,7 +155,6 @@ static void entry_unref(ScriptHost *host, SceneEntry *entry) {
     entry->name[0] = '\0';
 }
 
-// Loads scenes/<name>.lua into *entry (refs + Scene). Does not call on_enter.
 static bool load_into_entry(ScriptHost *host, SceneEntry *entry, const char *name) {
     lua_State *L = host->L;
     entry->scene_ref = entry->update_ref = entry->draw_ref = LUA_NOREF;
@@ -208,8 +180,6 @@ static bool load_into_entry(ScriptHost *host, SceneEntry *entry, const char *nam
     return true;
 }
 
-// Full transition: exits and unrefs the whole stack, rewinds the scene arena,
-// loads <name> as the sole entry.
 static bool do_change(ScriptHost *host, const char *name) {
     while (host->depth > 0) {
         SceneEntry *e = top(host);
@@ -239,8 +209,6 @@ static bool do_push(ScriptHost *host, const char *name) {
 
     SceneEntry *entry = &host->stack[host->depth];
     if (!load_into_entry(host, entry, name)) {
-        // Failed to enter the new scene; resume the one we paused. The error
-        // screen shows until the next successful transition or F5.
         call_hook0(host, below, "on_resume");
         return false;
     }
@@ -258,17 +226,11 @@ static bool do_pop(ScriptHost *host) {
     call_hook0(host, e, "on_exit");
     entry_unref(host, e);
     host->depth--;
-    // Popping an errored scene discards its error state; the scene below is
-    // presumed healthy.
     host->script_error = false;
     host->error_message[0] = '\0';
     call_hook0(host, top(host), "on_resume");
     return !host->script_error;
 }
-
-// ---------------------------------------------------------------------------
-// Lua bindings: the `gramarye` table (orchestration-level API only)
-// ---------------------------------------------------------------------------
 
 static int l_log(lua_State *L) {
     TraceLog(LOG_INFO, "LUA: %s", luaL_checkstring(L, 1));
@@ -278,10 +240,6 @@ static int l_log(lua_State *L) {
 static int l_require(lua_State *L) {
     const char *mod = luaL_checkstring(L, 1);
 
-    // "gramarye.*" modules are shipped embedded in the gramarye-ui binary and
-    // registered in package.preload by GramaryeUI_register_lua. Resolve them via
-    // the standard require so the library's versioned Lua layer loads with no
-    // filesystem access; game-local modules keep loading from assets/ below.
     if (strncmp(mod, "gramarye.", 9) == 0) {
         lua_getglobal(L, "require");
         lua_pushvalue(L, 1);
@@ -392,8 +350,6 @@ static int key_from_name(const char *name) {
     return 0;
 }
 
-// Accepts a key id (from gramarye.input.key) or a key name. Resolve names
-// once in on_enter and pass the id in hot paths to skip the string compares.
 static int checkkey(lua_State *L) {
     if (lua_type(L, 1) == LUA_TNUMBER) return (int)lua_tointeger(L, 1);
     const char *name = luaL_checkstring(L, 1);
@@ -450,10 +406,6 @@ static Color opt_color(lua_State *L, int idx, Color def) {
     return c;
 }
 
-// gramarye.draw.* stays immediate-mode on purpose: on_draw runs inside
-// BeginDrawing and raylib batches via rlgl, so a Lua->C command buffer would
-// add a copy with no batching gain. Bulk drawing belongs in C systems
-// (see systems/sprite); these are prototyping helpers.
 static int l_draw_text(lua_State *L) {
     const char *text = luaL_checkstring(L, 1);
     int x = (int)luaL_checkinteger(L, 2);
@@ -487,12 +439,6 @@ static int l_time_frames(lua_State *L) {
     return 1;
 }
 
-// ---------------------------------------------------------------------------
-// Demo data source — stands in for a game's C/ECS-owned data. The UI's List/Grid
-// pull rows from here by index; the full dataset never lives in Lua. A real game
-// would back these with its own components and do its sorting/filtering in C.
-// ---------------------------------------------------------------------------
-
 #define DEMO_ROW_COUNT 500
 
 static int l_demo_count(lua_State *L) {
@@ -500,20 +446,18 @@ static int l_demo_count(lua_State *L) {
     return 1;
 }
 
-// gramarye.demo.row(i) -> name, value   (i is 1-based, matching the List API)
 static int l_demo_row(lua_State *L) {
     int i = (int)luaL_checkinteger(L, 1);
     if (i < 1 || i > DEMO_ROW_COUNT) { lua_pushnil(L); lua_pushnil(L); return 2; }
     char name[32], value[16];
     snprintf(name, sizeof(name), "Unit %03d", i);
-    snprintf(value, sizeof(value), "%d hp", (i * 37) % 100 + 1);  // "processed" in C
+    snprintf(value, sizeof(value), "%d hp", (i * 37) % 100 + 1);
     lua_pushstring(L, name);
     lua_pushstring(L, value);
     return 2;
 }
 
 static void install_module(lua_State *L, const char *module, const luaL_Reg *fns) {
-    // gramarye table on stack top
     lua_newtable(L);
     luaL_setfuncs(L, fns, 0);
     lua_setfield(L, -2, module);
@@ -566,9 +510,6 @@ static void install_bindings(lua_State *L) {
 
     lua_newtable(L);
     luaL_setfuncs(L, root_fns, 0);
-    // Platform asset prefix, so the shared Lua layer can build correct texture
-    // paths (gramarye-ui itself is asset-model-agnostic). "" on Android, "assets/"
-    // elsewhere — matches l_require's path construction.
     lua_pushstring(L, ASSET_PREFIX);
     lua_setfield(L, -2, "asset_prefix");
     install_module(L, "scene", scene_fns);
@@ -579,10 +520,6 @@ static void install_bindings(lua_State *L) {
     install_module(L, "demo", demo_fns);
     lua_setglobal(L, "gramarye");
 }
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
 
 ScriptHost *ScriptHost_new(Arena_T arena, ECS *ecs, GlobalState *global_state) {
     if (!arena || !ecs) return NULL;
@@ -597,8 +534,6 @@ ScriptHost *ScriptHost_new(Arena_T arena, ECS *ecs, GlobalState *global_state) {
 
     host->L = luaL_newstate();
     luaL_openlibs(host->L);
-    // Generational GC: the per-frame workload (UI tables, closures) is almost
-    // entirely short-lived garbage, which the minor collector reclaims cheaply.
     lua_gc(host->L, LUA_GCGEN, 0, 0);
 
     lua_pushlightuserdata(host->L, host);
@@ -686,8 +621,6 @@ bool ScriptHost_reload_current(ScriptHost *host) {
     if (!e) return false;
     TraceLog(LOG_INFO, "SCRIPT: reloading scene '%s'", e->name);
 
-    // Drop the game-side module cache so lib/*.lua changes reload too.
-    // package.preload (embedded gramarye.* modules) is untouched.
     lua_newtable(host->L);
     lua_setfield(host->L, LUA_REGISTRYINDEX, LOADED_REGISTRY_KEY);
 
@@ -732,8 +665,6 @@ void ScriptHost_update(ScriptHost *host, float dt) {
     }
 }
 
-// Draws text wrapped to max_w. Tracebacks contain newlines (handled) and long
-// single lines like "assets/scripts/..." (character-wrapped).
 static void draw_wrapped_text(const char *text, int x, int y, int font_size, int max_w) {
     char line[256];
     int line_h = font_size + 4;

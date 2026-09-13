@@ -6,11 +6,11 @@
 typedef struct {
     float realtimeDelta;
     bool  turnPending;
-    int   tickToSimulate; // units are turns, could be actions take multiple ticks or just a turn system;
+    int   tickToSimulate;
 } Clock;
 
 void frame_tick(Clock *clock);
 
 
 
-#endif // CLOCK_H
+#endif

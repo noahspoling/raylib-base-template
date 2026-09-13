@@ -1,6 +1,3 @@
--- Pause scene: demo of the scene stack. main.lua pushes this with
--- gramarye.scene.push("pause"); the scene below keeps all its state (Lua
--- table, C systems, entities) but stops updating/drawing until we pop.
 local ui = gramarye.require("gramarye.ui")
 
 local KEY_ESCAPE = gramarye.input.key("escape")

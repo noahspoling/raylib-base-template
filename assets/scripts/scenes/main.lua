@@ -1,20 +1,17 @@
--- Main scene: demo of gramarye-ui primitives + game-side composite widgets.
--- Replace the body of on_draw with your game's actual screens.
-local ui      = gramarye.require("gramarye.ui")   -- library primitives
-local widgets = gramarye.require("lib/widgets")   -- game-side composites
-local tab     = 1   -- active tab: 1=Overview, 2=Inventory, 3=Settings
+local ui      = gramarye.require("gramarye.ui")
+local widgets = gramarye.require("lib/widgets")
+local tab     = 1
+local show_inv_popup = true
 
--- Key ids resolved once (string lookup happens here, not per frame).
 local KEY_SPACE  = gramarye.input.key("space")
 local KEY_ESCAPE = gramarye.input.key("escape")
+local KEY_K      = gramarye.input.key("k")
 
--- Hoisted callbacks: closures created inside on_draw are per-frame garbage;
--- anything that doesn't capture per-frame state belongs at scene level.
 local function goto_splash()  gramarye.scene.change("splash") end
+local function goto_planet()  gramarye.scene.change("planet") end
 local function push_pause()   gramarye.scene.push("pause")    end
 local function log_reload()   gramarye.log("reload pressed")  end
 
--- Fake inventory data for the demo
 local items = {
     { label = "Sword",   value = "80g"  },
     { label = "Shield",  value = "60g"  },
@@ -24,7 +21,6 @@ local items = {
     { label = "Boots",   value = "45g"  },
 }
 
--- Demo panel content for each tab
 local function overview_panel()
     return ui.Panel {
         id = "overview_panel",
@@ -57,53 +53,16 @@ local function overview_panel()
                 label    = "Reload (F5)",
                 on_click = log_reload,
             },
+            ui.Button {
+                id       = "btn_planet",
+                label    = "Planet >",
+                on_click = goto_planet,
+            },
         },
 
-        ui.Label { text = "space = splash   esc = pause   F5 = reload script (desktop)", skin = "hint" },
+        ui.Label { text = "space = splash   esc = pause   k = skin demo   F5 = reload script (desktop)", skin = "hint" },
     }
 end
-
-local function inventory_panel()
-    local slots = {}
-    for i, item in ipairs(items) do
-        slots[i] = widgets.ItemCard {
-            id    = "item_" .. i,
-            label = item.label,
-            icon  = ui.Label { text = item.label:sub(1,2),
-                                size = 14, color = {180,200,220,255} },
-            badge = widgets.Badge { count = i },
-            on_click = function()
-                gramarye.log("selected: " .. item.label)
-            end,
-        }
-    end
-
-    return ui.Panel {
-        id = "inv_panel",
-        layout = { dir = "column", w = { grow = true }, h = { grow = true },
-                   pad = 16, gap = 12 },
-
-        ui.Title "Inventory",
-        ui.Separator {},
-
-        -- Grid of item cards (row wrapping not in Clay; use nested rows)
-        ui.Row { gap = 8, table.unpack(slots, 1, 3) },
-        ui.Row { gap = 8, table.unpack(slots, 4, 6) },
-
-        ui.Spacer(0),
-
-        ui.Button {
-            id       = "sell_all",
-            label    = "Sell All",
-            skin     = "button_danger",
-            hover_skin = "button_danger_hover",
-            w        = 160,
-            on_click = function() gramarye.log("sell all!") end,
-        },
-    }
-end
-
-local settings_volume = 70
 
 local function settings_panel()
     return ui.Panel {
@@ -142,8 +101,6 @@ local function settings_panel()
     }
 end
 
--- Widgets tab: the M2 primitives. The List/Grid pull rows from gramarye.demo
--- (a C-owned data source) — only the visible rows ever cross into Lua.
 local search_text = ""
 local sel_row     = 1
 
@@ -156,7 +113,6 @@ local function widgets_panel()
         ui.Title "Widgets",
         ui.Separator {},
 
-        -- TextBox (controlled input)
         ui.Row {
             gap = 10, align = { y = "center" },
             ui.Label { text = "Search:", size = 16 },
@@ -169,7 +125,6 @@ local function widgets_panel()
                        skin = "label_dim" },
         },
 
-        -- Button with a floating tooltip
         ui.Row {
             gap = 10, align = { y = "center" },
             ui.Button { id = "tip_btn", label = "Hover me" },
@@ -177,7 +132,6 @@ local function widgets_panel()
             ui.Label { text = "has a tooltip", skin = "label_dim" },
         },
 
-        -- Small grid
         ui.Label { text = "Grid (12 cells, 6 cols):", skin = "label_dim" },
         ui.Grid {
             id = "demo_grid", count = 12, cols = 6, cell_h = 40, gap = 6,
@@ -190,7 +144,6 @@ local function widgets_panel()
             end,
         },
 
-        -- C-backed, virtualized list
         ui.Label { text = "List (" .. gramarye.demo.count()
                           .. " C-backed rows, virtualized):", skin = "label_dim" },
         ui.List {
@@ -211,8 +164,6 @@ local function widgets_panel()
     }
 end
 
--- Hoisted tab data: the label list, panel constructors, and per-tab click
--- closures never change, so build them once instead of every frame.
 local panels     = { overview_panel, inventory_panel, settings_panel, widgets_panel }
 local tabs       = { "Overview", "Inventory", "Settings", "Widgets" }
 local tab_clicks = {}
@@ -246,7 +197,6 @@ return {
         tab = 1
     end,
 
-    -- Scene-stack hooks (optional): fired around gramarye.scene.push/pop.
     on_pause  = function() gramarye.log("main paused")  end,
     on_resume = function() gramarye.log("main resumed") end,
 
@@ -257,6 +207,9 @@ return {
         if gramarye.input.key_pressed(KEY_ESCAPE) then
             gramarye.scene.push("pause")
         end
+        if gramarye.input.key_pressed(KEY_K) then
+            gramarye.scene.change("skin_demo")
+        end
     end,
 
     on_draw = function()
@@ -264,7 +217,6 @@ return {
             id     = "main_root",
             layout = { dir = "column", w = { grow = true }, h = { grow = true } },
 
-            -- Header bar
             widgets.HeaderBar {
                 title   = "Gramarye Demo",
                 actions = {
@@ -279,8 +231,15 @@ return {
 
             tab_bar(),
 
-            -- Active panel
             panels[tab](),
         })
+        if show_inv_popup then
+            gramarye.ui.render(ui.Popup {
+                id = "inv_win", title = "Inventory", x = 120, y = 80, w = 320,
+                pulse = { beam = { 110, 160, 255, 255 } },
+                on_close = function() show_inv_popup = false end,
+                ui.Label "contents go here",
+            })
+        end
     end,
 }

@@ -12,7 +12,7 @@ static void draw_sprite_cb(ECS *ecs, EntityId entity, void *component, void *use
     float w = sprite->w * tf->scale;
     float h = sprite->h * tf->scale;
     Rectangle dest = { tf->x, tf->y, w, h };
-    Vector2 origin = { w / 2.0f, h / 2.0f };  // rotate/scale around the center
+    Vector2 origin = { w / 2.0f, h / 2.0f };
 
     if (sprite->texture != 0) {
         Texture2D tex = TextureStore_get(sprite->texture);

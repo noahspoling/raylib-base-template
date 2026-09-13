@@ -19,8 +19,6 @@ void Scene_add_system(Scene *scene, SystemId id) {
     scene->dirty = true;
 }
 
-// Rebuild the resolved System* cache, insertion-sorted by priority (stable,
-// n <= SCENE_MAX_SYSTEMS). Runs only when the system set changed.
 static void scene_rebuild_cache(Scene *scene, ECS *ecs) {
     scene->sorted_count = 0;
     for (size_t i = 0; i < scene->count; i++) {

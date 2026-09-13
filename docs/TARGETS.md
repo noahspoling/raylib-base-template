@@ -122,3 +122,32 @@ If a future Gramarye release fails on a specific triple, fix it upstream or temp
 ## iOS
 
 There is **no** `cmake --preset ios` in this repo. See **[mobile/README-ios.md](../mobile/README-ios.md)**.
+
+---
+
+## CMakeLists.txt implementation notes
+
+These used to be inline comments in `CMakeLists.txt`; kept here since the build script itself is now comment-free:
+
+- **`GRAMARYE_TARGET`** drives raylib's `PLATFORM` / `OPENGL_VERSION` and Gramarye's `BUILD_WEB`. Valid values: `desktop | web | android | macos_gles_angle`. iOS has no upstream raylib CMake `PLATFORM`; use `mobile/README-ios.md` instead.
+- **`GRAMARYE_GAME_THREADING`** (default `OFF`): the game loop is single-threaded, so libcore's locks default to compiled-out no-ops (`GRAMARYE_SYNC_SINGLE_THREADED` propagates to the ECS built in this tree). Flip it `ON` if the game grows real threads (e.g. async asset loading). Standalone `gramarye-ecs` builds/tests keep threading `ON` and stay fully tested independently of this flag.
+- **Lua 5.4** (scripting layer) is fetched via `walterschell/Lua`, which wraps the upstream sources in plain CMake so the active toolchain (NDK, Emscripten, desktop) applies as-is.
+- **`CMAKE_POLICY_VERSION_MINIMUM 3.5`**: upstream Lua declares `cmake_minimum_required(VERSION 3.1)`, which CMake 4+ refuses outright; this floor only applies to subprojects that declare an older minimum, so it's set globally before fetching.
+- **`GRAMARYE_UI_LUA`** enables Lua bindings in gramarye-ui (requires `lua_static`, fetched earlier in the same file). gramarye-ui itself is Clay UI and reuses the raylib target already fetched above — drop a local checkout into `libs/gramarye-ui` to skip the network fetch, same pattern as the other vendored libs.
+- **Asset staging** (`<project>/assets`) differs per target:
+  - desktop/macOS: symlinked next to the binary; `main.c` pins cwd to the exe dir. A symlink (not a copy) means editing source `assets/*.lua` is picked up immediately by F5 hot-reload (`ScriptHost_reload_current`) with no rebuild — a stale copy would silently shadow every edit. On Windows, `mklink` for directories needs elevation/Developer Mode, so the build copies the directory instead of symlinking.
+  - web: preloaded into MEMFS at `/assets`.
+  - android: packaged into the APK by Gradle (`assets.srcDirs` includes `../../assets`).
+- **`-Wl,-z,max-page-size=16384`** (Android link options): required for Google Play on Android 15+, which mandates 16 KB-aligned LOAD segments.
+
+## Android splash theme notes
+
+`android/app/src/main/res/values/themes.xml` defines the base `Theme.GramaryeSplash`; `values-v31/themes.xml` overrides it with splash-screen attributes on Android 12+ (the system splash shown while `NativeActivity` loads the game `.so`). Replace `windowSplashScreenAnimatedIcon` in the v31 override with a drawable to brand it.
+
+## web/shell.html implementation notes
+
+The custom Emscripten shell replaces the default red/white DOM Emscripten normally injects with a loading overlay that matches the rest of the page:
+
+- The `<script>` block is the minimum glue Emscripten's runtime looks for on `Module` — no external scripts, no CDN dependency.
+- `Module.setStatus` is called by the runtime during download/instantiate with either a `"Downloading...(n/m)"`-style string or `""` when startup is complete; that gets folded into the loading overlay's progress bar and hidden once startup finishes.
+- The `#loading` overlay is shown until the wasm module reports it is running, then hidden by `setStatus`. It's kept as plain CSS/DOM (no framework) so it never depends on the module actually loading.

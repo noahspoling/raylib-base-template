@@ -1,13 +1,14 @@
--- Splash scene: full-screen Clay UI demo over C-rendered sprite entities.
--- Shows the engine title, waits 2 s or responds to click → main.
 local ui    = gramarye.require("lib/ui")
 local theme = gramarye.require("gramarye.theme")
 local t     = 0
 
--- Opt-in image skinning: if the UI atlas is present, skin buttons with a
--- nine-patch frame. If the atlas is missing, load_texture returns nil and
--- buttons keep their color skin — no crash, pure graceful fallback. Runs once;
--- theme bindings persist across scenes (the module is cached).
+theme.apply {
+    continue       = { bg = {50, 65, 120, 255}, text = {255, 255, 255, 255},
+                        radius = 6, font_size = 18, pad = { h = 20, v = 10 } },
+    continue_hover = { bg = {25, 32, 60, 255},  text = {230, 230, 230, 255},
+                        radius = 6, font_size = 18, pad = { h = 20, v = 10 } },
+}
+
 local function apply_skin()
     local prefix = gramarye.asset_prefix or ""
     local atlas  = gramarye.ui.load_texture(prefix .. "textures/ui_atlas.png")
@@ -18,9 +19,6 @@ local function apply_skin()
     theme.bind_image("button_hover", { nine = np })
 end
 
--- Sprite entity demo: quads simulated/moved via gramarye.entities and drawn
--- by the C sprite_render system (under the camera, below the UI). The UI tree
--- here has no opaque background, so they show through.
 local sprites = {}
 
 local function spawn_sprites()
@@ -30,7 +28,6 @@ local function spawn_sprites()
     }
     for i, c in ipairs(colors) do
         local e = gramarye.entities.spawn()
-        -- World (0,0) is screen center (camera offset). Row below the title.
         gramarye.entities.set_transform(e, (i - 3) * 90, 190)
         gramarye.entities.set_sprite(e, 0, 40, 40, c[1], c[2], c[3], 255)
         sprites[i] = e
@@ -38,11 +35,6 @@ local function spawn_sprites()
 end
 
 local function goto_main() gramarye.scene.change("main") end
-
--- Static UI: no per-frame data, so the tree is built once and re-rendered.
--- (Tables/closures built inside on_draw are per-frame garbage; hoist what
--- doesn't change.)
-local splash_tree = nil
 
 local function build_tree()
     return ui.Frame {
@@ -60,10 +52,9 @@ local function build_tree()
             id       = "splash_continue",
             label    = "Continue  >",
             w        = 200,
+            skin     = "continue",
             on_click = goto_main,
         },
-
-        ui.Label { text = "or wait 2 s", skin = "label_dim" },
     }
 end
 
@@ -73,7 +64,6 @@ return {
         apply_skin()
         gramarye.systems.add("global")
         spawn_sprites()
-        splash_tree = build_tree()
     end,
 
     on_exit = function()
@@ -85,17 +75,15 @@ return {
 
     on_update = function(dt)
         t = t + dt
-        -- Bob and spin the quads; motion state lives in the ECS, not Lua.
         for i, e in ipairs(sprites) do
             gramarye.entities.set_transform(e,
                 (i - 3) * 90,
                 190 + math.sin(t * 2 + i) * 14,
                 t * 60 + i * 30)
         end
-        if t > 2.0 then gramarye.scene.change("main") end
     end,
 
     on_draw = function()
-        gramarye.ui.render(splash_tree)
+        gramarye.ui.render(build_tree())
     end,
 }

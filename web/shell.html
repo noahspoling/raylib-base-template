@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>__APP_TITLE__</title>
+<style>
+    :root {
+        color-scheme: dark;
+        --bg: #0f1016;
+        --panel: #10121a;
+        --border: #3a3e48;
+        --text: #c8ccd4;
+        --accent: #5a8cc8;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        overflow: hidden;
+    }
+    #stage {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    canvas.emscripten {
+        display: block;
+        outline: none;
+        border: 0 none;
+        background: #000;
+        max-width: 100vw;
+        max-height: 100vh;
+        image-rendering: pixelated;
+    }
+    #loading {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: var(--bg);
+        z-index: 10;
+        transition: opacity 0.25s ease;
+    }
+    #loading.hidden {
+        opacity: 0;
+        pointer-events: none;
+    }
+    #loading-title {
+        font-size: 15px;
+        letter-spacing: 0.04em;
+        color: var(--text);
+        opacity: 0.8;
+    }
+    #loading-bar-track {
+        width: 260px;
+        height: 6px;
+        border-radius: 3px;
+        background: #23262f;
+        overflow: hidden;
+    }
+    #loading-bar-fill {
+        height: 100%;
+        width: 0%;
+        background: var(--accent);
+        transition: width 0.2s ease;
+    }
+    #loading-status {
+        font-size: 12px;
+        color: #8a8f9a;
+        min-height: 1em;
+    }
+    #error-log {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        max-height: 30vh;
+        overflow-y: auto;
+        margin: 0;
+        padding: 8px 12px;
+        font: 12px/1.4 ui-monospace, monospace;
+        color: #e08585;
+        background: rgba(16, 18, 26, 0.92);
+        border-top: 1px solid var(--border);
+        white-space: pre-wrap;
+        display: none;
+    }
+    #error-log.visible { display: block; }
+</style>
+</head>
+<body>
+    <div id="stage">
+        <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+    </div>
+
+    <div id="loading">
+        <div id="loading-title">__APP_TITLE__</div>
+        <div id="loading-bar-track"><div id="loading-bar-fill"></div></div>
+        <div id="loading-status">Loading&hellip;</div>
+    </div>
+
+    <pre id="error-log"></pre>
+
+    <script>
+        var loadingEl   = document.getElementById('loading');
+        var barFillEl   = document.getElementById('loading-bar-fill');
+        var statusEl    = document.getElementById('loading-status');
+        var errorLogEl  = document.getElementById('error-log');
+
+        function logError(text) {
+            errorLogEl.textContent += text + "\n";
+            errorLogEl.classList.add('visible');
+        }
+
+        var Module = {
+            canvas: document.getElementById('canvas'),
+
+            setStatus: function (text) {
+                if (!text) {
+                    loadingEl.classList.add('hidden');
+                    return;
+                }
+                statusEl.textContent = text;
+                var match = text.match(/([\d.]+)\s*\/\s*([\d.]+)/);
+                if (match) {
+                    var pct = (parseFloat(match[1]) / parseFloat(match[2])) * 100;
+                    barFillEl.style.width = pct.toFixed(1) + '%';
+                }
+            },
+
+            print: function (text) {
+                if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+                console.log(text);
+            },
+            printErr: function (text) {
+                if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+                console.error(text);
+                logError(text);
+            },
+
+            onAbort: function (what) {
+                statusEl.textContent = 'Failed to start.';
+                logError(String(what));
+                loadingEl.classList.remove('hidden');
+            },
+        };
+
+        window.addEventListener('error', function (e) {
+            logError(e.message);
+        });
+    </script>
+    {{{ SCRIPT }}}
+</body>
+</html>

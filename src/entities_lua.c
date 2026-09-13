@@ -1,5 +1,6 @@
 #include "entities_lua.h"
 #include "components/sprite.h"
+#include "components/skinned_sprite.h"
 #include "services/texture_store.h"
 #include "raylib.h"
 
@@ -50,7 +51,6 @@ static int l_entity_tostring(lua_State *L) {
     return 1;
 }
 
-// gramarye.entities.spawn() -> entity
 static int l_entities_spawn(lua_State *L) {
     ECS *ecs = ecs_from(L);
     EntityId id = Entity_create(ECS_get_entity_registry(ecs));
@@ -60,22 +60,20 @@ static int l_entities_spawn(lua_State *L) {
     return 1;
 }
 
-// gramarye.entities.despawn(entity)
 static int l_entities_despawn(lua_State *L) {
     ECS *ecs = ecs_from(L);
     GlobalState *state = state_from(L);
     EntityId *e = check_entity(L, 1);
     if (ECS_has_component(ecs, *e, state->sprite_type))
         ECS_remove_component(ecs, *e, state->sprite_type);
+    if (ECS_has_component(ecs, *e, state->skinned_sprite_type))
+        ECS_remove_component(ecs, *e, state->skinned_sprite_type);
     if (ECS_has_component(ecs, *e, state->transform_type))
         ECS_remove_component(ecs, *e, state->transform_type);
     Entity_destroy(ECS_get_entity_registry(ecs), *e);
     return 0;
 }
 
-// gramarye.entities.set_transform(entity, x, y [, rot [, scale]])
-// Updates in place when the component exists — the hot path (per-frame moves
-// from Lua) does no ECS allocation.
 static int l_entities_set_transform(lua_State *L) {
     ECS *ecs = ecs_from(L);
     GlobalState *state = state_from(L);
@@ -95,7 +93,6 @@ static int l_entities_set_transform(lua_State *L) {
     return 0;
 }
 
-// gramarye.entities.set_sprite(entity, tex_id, w, h [, r,g,b,a [, sx,sy,sw,sh]])
 static int l_entities_set_sprite(lua_State *L) {
     ECS *ecs = ecs_from(L);
     GlobalState *state = state_from(L);
@@ -128,7 +125,39 @@ static int l_entities_set_sprite(lua_State *L) {
     return 0;
 }
 
-// gramarye.textures.load(path) -> id (0 on failure; path relative to assets/)
+static int l_entities_set_skinned_sprite(lua_State *L) {
+    ECS *ecs = ecs_from(L);
+    GlobalState *state = state_from(L);
+    EntityId *e = check_entity(L, 1);
+    SkinnedSpriteComp sk;
+    memset(&sk, 0, sizeof(sk));
+    sk.anim_texture = (int)luaL_checkinteger(L, 2);
+    sk.skin_texture = (int)luaL_checkinteger(L, 3);
+    sk.w = (float)luaL_checknumber(L, 4);
+    sk.h = (float)luaL_checknumber(L, 5);
+    sk.tint.r = (unsigned char)luaL_optinteger(L, 6, 255);
+    sk.tint.g = (unsigned char)luaL_optinteger(L, 7, 255);
+    sk.tint.b = (unsigned char)luaL_optinteger(L, 8, 255);
+    sk.tint.a = (unsigned char)luaL_optinteger(L, 9, 255);
+    if (lua_gettop(L) >= 13) {
+        sk.src.x = (float)luaL_checknumber(L, 10);
+        sk.src.y = (float)luaL_checknumber(L, 11);
+        sk.src.width = (float)luaL_checknumber(L, 12);
+        sk.src.height = (float)luaL_checknumber(L, 13);
+    } else if (sk.anim_texture != 0) {
+        Texture2D tex = TextureStore_get(sk.anim_texture);
+        sk.src = (Rectangle){ 0, 0, (float)tex.width, (float)tex.height };
+    }
+
+    SkinnedSpriteComp *existing = (SkinnedSpriteComp *)ECS_get_component(ecs, *e, state->skinned_sprite_type);
+    if (existing) {
+        *existing = sk;
+    } else {
+        ECS_add_component(ecs, *e, state->skinned_sprite_type, &sk);
+    }
+    return 0;
+}
+
 static int l_textures_load(lua_State *L) {
     const char *rel = luaL_checkstring(L, 1);
     char path[256];
@@ -158,5 +187,6 @@ void entities_lua_register(ScriptHost *host, ECS *ecs, GlobalState *state) {
     ScriptHost_register_function(host, "entities", "despawn", l_entities_despawn);
     ScriptHost_register_function(host, "entities", "set_transform", l_entities_set_transform);
     ScriptHost_register_function(host, "entities", "set_sprite", l_entities_set_sprite);
+    ScriptHost_register_function(host, "entities", "set_skinned_sprite", l_entities_set_skinned_sprite);
     ScriptHost_register_function(host, "textures", "load", l_textures_load);
 }

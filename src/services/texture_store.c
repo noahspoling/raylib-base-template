@@ -44,6 +44,11 @@ Texture2D TextureStore_get(int id) {
     return g_slots[id - 1].texture;
 }
 
+const Texture2D *TextureStore_get_ref(int id) {
+    if (id < 1 || id > g_count) return NULL;
+    return &g_slots[id - 1].texture;
+}
+
 void TextureStore_shutdown(void) {
     for (int i = 0; i < g_count; i++) {
         if (g_slots[i].texture.id != 0) UnloadTexture(g_slots[i].texture);
