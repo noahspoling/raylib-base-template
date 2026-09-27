@@ -1,6 +1,7 @@
 #ifndef WORLD_PLANET_H
 #define WORLD_PLANET_H
 
+#include <stdint.h>
 #include <stddef.h>
 
 #ifndef PLANET_MAX_LEVEL
@@ -12,28 +13,28 @@
 typedef struct { float x, y, z; } PlanetV3;
 
 typedef struct Planet {
-    int level;
-    int frequency;
-    int cell_count;
+    int32_t level;
+    int32_t frequency;
+    int32_t cell_count;
 
     PlanetV3 *pos;
-    int       (*neighbors)[PLANET_MAX_DEGREE];
-    unsigned char *degree;
+    int32_t   (*neighbors)[PLANET_MAX_DEGREE];
+    uint8_t  *degree;
 
     PlanetV3 *corner_pos;
-    int       corner_count;
-    int       (*cell_corners)[PLANET_MAX_DEGREE];
+    int32_t   corner_count;
+    int32_t   (*cell_corners)[PLANET_MAX_DEGREE];
 } Planet;
 
-Planet *planet_create(int level);
+Planet *planet_create(int32_t level);
 
-Planet *planet_rebuild(Planet *p, int level);
+Planet *planet_rebuild(Planet *p, int32_t level);
 
 void planet_destroy(Planet *p);
 
-int planet_cell_count_for_level(int level);
+int32_t planet_cell_count_for_level(int32_t level);
 
-static inline float planet_cell_latitude(const Planet *p, int cell) {
+static inline float planet_cell_latitude(const Planet *p, int32_t cell) {
     return p->pos[cell].y;
 }
 

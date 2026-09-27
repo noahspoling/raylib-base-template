@@ -1,4 +1,5 @@
 #include "services/world/world_pipeline.h"
+#include <stdint.h>
 
 #include <math.h>
 #include <stdlib.h>
@@ -12,19 +13,19 @@ static float    vlen(PlanetV3 a) { return sqrtf(dot(a, a)); }
 static PlanetV3 nrm(PlanetV3 a)  { float l = vlen(a); return l > 1e-6f ? scl(a, 1.0f / l) : a; }
 static float    clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
 
-static float hashf(int i, unsigned int seed) {
-    unsigned int h = (unsigned int)i * 2654435761u ^ (seed * 40503u + 0x9e3779b9u);
+static float hashf(int32_t i, uint32_t seed) {
+    uint32_t h = (uint32_t)i * 2654435761u ^ (seed * 40503u + 0x9e3779b9u);
     h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
     return (float)(h & 0xffffffu) / (float)0xffffffu;
 }
 
 void world_climate_run(WorldFields *f, const WindField *wind) {
-    const Planet *p          = f->planet;
+    const Planet         *p          = f->planet;
     const WorldGenParams *pm = f->params;
-    int   n   = f->count;
-    float sea = pm->sea_level;
+    int32_t               n   = f->count;
+    float                 sea = pm->sea_level;
 
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         if (f->elevation[i] < sea) {
             f->moisture[i] = 1.0f;
         } else {
@@ -33,19 +34,19 @@ void world_climate_run(WorldFields *f, const WindField *wind) {
         }
     }
 
-    float *weight  = (float *)calloc((size_t)n * PLANET_MAX_DEGREE, sizeof(float));
-    int   *primary = (int   *)malloc((size_t)n * sizeof(int));
+    float   *weight  = (float *)calloc((size_t)n * PLANET_MAX_DEGREE, sizeof(float));
+    int32_t *primary = (int32_t   *)malloc((size_t)n * sizeof(int32_t));
     if (!weight || !primary) { free(weight); free(primary); return; }
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         primary[i] = -1;
         if (f->elevation[i] < sea) continue;
         PlanetV3 negw = scl(world_wind_sample(wind, p->pos[i]), -1.0f);
-        int deg = p->degree[i];
+        int32_t deg = p->degree[i];
         float local[PLANET_MAX_DEGREE] = { 0 };
         float sum = 0.0f, best = 0.0f;
-        int besti = -1;
-        for (int k = 0; k < deg; k++) {
-            int nb = p->neighbors[i][k];
+        int32_t besti = -1;
+        for (int32_t k = 0; k < deg; k++) {
+            int32_t nb = p->neighbors[i][k];
             if (nb < 0) continue;
             float align = dot(nrm(sub(p->pos[nb], p->pos[i])), negw);
             if (align > 0.0f) {
@@ -55,27 +56,27 @@ void world_climate_run(WorldFields *f, const WindField *wind) {
             }
         }
         if (sum > 1e-6f) {
-            for (int k = 0; k < deg; k++)
+            for (int32_t k = 0; k < deg; k++)
                 weight[i * PLANET_MAX_DEGREE + k] = local[k] / sum;
             primary[i] = besti;
         }
     }
 
-    float reach  = pm->moisture_reach > 0.0f ? pm->moisture_reach : 1.0f;
-    int   sweeps = (int)(6.0f + reach * 14.0f);
-    if (sweeps < 6)  sweeps = 6;
-    if (sweeps > 48) sweeps = 48;
+    float       reach  = pm->moisture_reach > 0.0f ? pm->moisture_reach : 1.0f;
+    int32_t     sweeps = (int32_t)(6.0f + reach * 14.0f);
+    if          (sweeps < 6)  sweeps = 6;
+    if          (sweeps > 48) sweeps = 48;
     const float keep         = 0.86f;
     const float recycle_gain = 0.16f;
-    for (int s = 0; s < sweeps; s++) {
-        for (int i = 0; i < n; i++) {
+    for         (int32_t s = 0; s < sweeps; s++) {
+        for (int32_t i = 0; i < n; i++) {
             if (f->elevation[i] < sea) continue;
-            int deg = p->degree[i];
+            int32_t deg = p->degree[i];
             float pulled = 0.0f;
-            for (int k = 0; k < deg; k++) {
+            for (int32_t k = 0; k < deg; k++) {
                 float wgt = weight[i * PLANET_MAX_DEGREE + k];
                 if (wgt <= 0.0f) continue;
-                int nb = p->neighbors[i][k];
+                int32_t nb = p->neighbors[i][k];
                 if (nb < 0) continue;
                 pulled += wgt * f->moisture[nb];
             }
@@ -86,9 +87,9 @@ void world_climate_run(WorldFields *f, const WindField *wind) {
     }
 
     float rs = pm->rain_shadow;
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         if (f->elevation[i] < sea || primary[i] < 0) continue;
-        int up = p->neighbors[i][primary[i]];
+        int32_t up = p->neighbors[i][primary[i]];
         float d = f->elevation[i] - f->elevation[up];
         if (d > 0.0f) f->moisture[i] *= 1.0f + rs * clamp01(d * 2.0f) * 0.5f;
         else          f->moisture[i] *= 1.0f - rs * clamp01(-d * 2.0f);
@@ -97,7 +98,7 @@ void world_climate_run(WorldFields *f, const WindField *wind) {
     free(weight);
     free(primary);
 
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         if (f->elevation[i] < sea) { f->rainfall[i] = 1.0f; continue; }
         float tcap   = 0.70f + 0.30f * f->temperature[i];
         float jitter = (hashf(i, pm->seed) - 0.5f) * 0.04f;
@@ -106,23 +107,23 @@ void world_climate_run(WorldFields *f, const WindField *wind) {
 
     float *tmp = (float *)malloc((size_t)n * sizeof(float));
     if (tmp) {
-        for (int pass = 0; pass < 3; pass++) {
-            for (int i = 0; i < n; i++) {
-                if (f->elevation[i] < sea) { tmp[i] = f->rainfall[i]; continue; }
-                float sum = f->rainfall[i];
-                int   cnt = 1, deg = p->degree[i];
-                for (int k = 0; k < deg; k++) {
-                    int nb = p->neighbors[i][k];
+        for (int32_t pass = 0; pass < 3; pass++) {
+            for (int32_t i = 0; i < n; i++) {
+                if      (f->elevation[i] < sea) { tmp[i] = f->rainfall[i]; continue; }
+                float   sum = f->rainfall[i];
+                int32_t cnt = 1, deg = p->degree[i];
+                for     (int32_t k = 0; k < deg; k++) {
+                    int32_t nb = p->neighbors[i][k];
                     if (nb < 0) continue;
                     sum += f->rainfall[nb];
                     cnt++;
                 }
                 tmp[i] = sum / (float)cnt;
             }
-            for (int i = 0; i < n; i++) f->rainfall[i] = tmp[i];
+            for (int32_t i = 0; i < n; i++) f->rainfall[i] = tmp[i];
         }
         free(tmp);
     }
-    for (int i = 0; i < n; i++)
+    for (int32_t i = 0; i < n; i++)
         f->humidity[i] = (f->elevation[i] < sea) ? 1.0f : f->rainfall[i];
 }

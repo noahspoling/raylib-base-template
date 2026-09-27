@@ -1,4 +1,5 @@
 #include "services/world/world_pipeline.h"
+#include <stdint.h>
 
 #include <math.h>
 #include <stdlib.h>
@@ -32,13 +33,13 @@ PlanetV3 world_climate_wind_at(PlanetV3 pos) {
     return nrm(add(scl(east, zonal), scl(north, merid)));
 }
 
-PlanetV3 world_climate_wind(const Planet *p, int cell) {
+PlanetV3 world_climate_wind(const Planet *p, int32_t cell) {
     return world_climate_wind_at(p->pos[cell]);
 }
 
 #define WIND_SAMPLE_K 4
 
-WindField world_wind_field_build(int count) {
+WindField world_wind_field_build(int32_t count) {
     WindField wf = { 0, NULL, NULL, NULL };
     if (count <= 0) return wf;
     wf.count = count;
@@ -51,7 +52,7 @@ WindField world_wind_field_build(int count) {
     }
 
     const float golden_angle = 2.39996323f;
-    for (int i = 0; i < count; i++) {
+    for (int32_t i = 0; i < count; i++) {
         float yv = 1.0f - (2.0f * (float)i + 1.0f) / (float)count;
         float r2 = 1.0f - yv * yv;
         float r  = r2 > 0.0f ? sqrtf(r2) : 0.0f;
@@ -76,14 +77,14 @@ void world_wind_field_free(WindField *wf) {
 PlanetV3 world_wind_sample(const WindField *wf, PlanetV3 pos) {
     if (!wf || wf->count == 0 || !wf->index) return world_climate_wind_at(pos);
 
-    int   idx[WIND_SAMPLE_K];
-    float d2[WIND_SAMPLE_K];
-    int   k = KDTree_nearest(wf->index, (const float *)&pos, WIND_SAMPLE_K, idx, d2);
-    if (k == 0) return world_climate_wind_at(pos);
+    int32_t idx[WIND_SAMPLE_K];
+    float   d2[WIND_SAMPLE_K];
+    int32_t k = KDTree_nearest(wf->index, (const float *)&pos, WIND_SAMPLE_K, idx, d2);
+    if      (k == 0) return world_climate_wind_at(pos);
 
     PlanetV3 sum = v3(0, 0, 0);
     float wsum = 0.0f;
-    for (int i = 0; i < k; i++) {
+    for (int32_t i = 0; i < k; i++) {
         float w = 1.0f / (d2[i] + 1e-4f);
         sum = add(sum, scl(wf->wind[idx[i]], w));
         wsum += w;

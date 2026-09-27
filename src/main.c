@@ -1,4 +1,5 @@
 #include "raylib.h"
+#include <stdint.h>
 #include "arena.h"
 #include "gramarye_ecs/ecs.h"
 
@@ -13,7 +14,7 @@
 #include "components/sprite.h"
 #include "components/skinned_sprite.h"
 #include "components/tile.h"
-#include "services/texture_store.h"
+#include "services/stores/texture_store.h"
 #include "systems/sprite/sprite_system.h"
 #include "systems/skinned_sprite/skinned_sprite_system.h"
 
@@ -26,7 +27,7 @@
 
 #define WORLD_START_LEVEL 4
 
-static void world_custom_draw(int kind, float x, float y, float w, float h, void *user) {
+static void world_custom_draw(int32_t kind, float x, float y, float w, float h, void *user) {
     World *world = (World *)user;
     if (kind == WORLD_GLOBE_KIND)              world_draw_in_rect(world, x, y, w, h);
     else if (kind == WORLD_CONTROLS_KIND)      world_draw_controls_in_rect(world, x, y, w, h);
@@ -151,10 +152,10 @@ int main(void) {
 
     //limits the characters rendered
     int ui_codepoints[95 + 4];
-    int ui_cp_count = 0;
-    for (int c = 32; c <= 126; c++) ui_codepoints[ui_cp_count++] = c;
-    const int ui_extra[] = { 0x00D7, 0x2014, 0x2026, 0x2022 }; // x, —, …, • special characters
-    for (int k = 0; k < (int)(sizeof(ui_extra) / sizeof(ui_extra[0])); k++)
+    int32_t ui_cp_count = 0;
+    for (int32_t c = 32; c <= 126; c++) ui_codepoints[ui_cp_count++] = c;
+    const int32_t ui_extra[] = { 0x00D7, 0x2014, 0x2026, 0x2022 }; // x, —, …, • special characters
+    for (int32_t k = 0; k < (int32_t)(sizeof(ui_extra) / sizeof(ui_extra[0])); k++)
         ui_codepoints[ui_cp_count++] = ui_extra[k];
 
     Font ui_fonts[1];

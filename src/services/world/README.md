@@ -91,11 +91,11 @@ index, so the per-tile component stays small.
 
 ```c
 typedef struct TileComp {
-    int   cell;          // index into Planet geometry
-    float elevation;     // [-1, 1]  (< sea_level is underwater)
-    float temperature;   // [0, 1]
-    float humidity;      // [0, 1]
-    unsigned char terrain; // TileTerrain, DERIVED from the fields above
+    int32_t cell;        // index into Planet geometry
+    float   elevation;   // [-1, 1]  (< sea_level is underwater)
+    float   temperature; // [0, 1]
+    float   humidity;    // [0, 1]
+    uint8_t terrain;     // TileTerrain, DERIVED from the fields above
 } TileComp;
 ```
 
@@ -573,7 +573,7 @@ inside it. Everything above reads the already-written flat mirror.
 Regions (continents, provinces, climate zones, political territories) are a
 labeling pass. Also a **post-pass** in `world_regenerate()`:
 
-1. Add an `int region` field (see [Add more per-tile fields](#add-more-per-tile-fields)).
+1. Add an `int32_t region` field (see [Add more per-tile fields](#add-more-per-tile-fields)).
    `-1` means unassigned.
 2. **Flood fill / connected components:** walk cells; for each unassigned land
    cell, start a new region id and BFS/DFS across `planet->neighbors` to all
@@ -596,7 +596,7 @@ Features are discrete things placed ON tiles rather than a change to the base
 biome: volcanoes, resource deposits, forests-as-objects, settlements, ruins. Two
 viable storage strategies:
 
-- **As a tile field** (`unsigned char feature`) if a cell has at most one and you
+- **As a tile field** (`uint8_t feature`) if a cell has at most one and you
   want it in the flat mirror for fast rendering. Follow
   [Add more per-tile fields](#add-more-per-tile-fields).
 - **As separate ECS entities** referencing a `cell` index, if features are sparse,

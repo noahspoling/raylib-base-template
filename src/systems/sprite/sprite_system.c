@@ -1,6 +1,6 @@
 #include "systems/sprite/sprite_system.h"
 #include "components/sprite.h"
-#include "services/texture_store.h"
+#include "services/stores/texture_store.h"
 #include "raylib.h"
 
 static void draw_sprite_cb(ECS *ecs, EntityId entity, void *component, void *userData) {

@@ -1,4 +1,5 @@
 #include "services/local_chunk/local_chunk_lua.h"
+#include <stdint.h>
 
 #include "lua.h"
 #include "lauxlib.h"
@@ -12,7 +13,7 @@ static LocalChunkGroup g_current_group = {0};
 const LocalChunkGroup *local_chunk_lua_current(void) { return &g_current_group; }
 
 static int l_local_chunk_generate(lua_State *L) {
-    int cell = (int)luaL_checkinteger(L, 1);
+    int32_t cell = (int32_t)luaL_checkinteger(L, 1);
     lua_pushboolean(L, 0);
     if (!g_world) return 1;
 
@@ -54,8 +55,8 @@ void local_chunk_lua_register(ScriptHost *host, World *world) {
     ScriptHost_register_function(host, "local_chunk", "current_cell", l_local_chunk_current_cell);
 
     if (world) {
-        int mismatches = 0;
-        int total = local_chunk_debug_check_reciprocity(world_planet(world), &mismatches);
+        int32_t mismatches = 0;
+        int32_t total = local_chunk_debug_check_reciprocity(world_planet(world), &mismatches);
         TraceLog(LOG_INFO, "local_chunk: edge-role reciprocity check: %d/%d candidate-staggered "
                              "edges forced to clean (disagreement)", mismatches, total);
     }

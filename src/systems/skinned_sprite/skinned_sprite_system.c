@@ -1,7 +1,8 @@
 #include "systems/skinned_sprite/skinned_sprite_system.h"
+#include <stdint.h>
 #include "components/skinned_sprite.h"
 #include "components/sprite.h"
-#include "services/texture_store.h"
+#include "services/stores/texture_store.h"
 #include "raylib.h"
 
 #if defined(__ANDROID__)
@@ -17,8 +18,8 @@
 #endif
 
 static Shader g_skin_shader;
-static int g_texture1_loc = -1;
-static int g_texel_size_loc = -1;
+static int32_t g_texture1_loc = -1;
+static int32_t g_texel_size_loc = -1;
 static bool g_shader_loaded = false;
 
 static void draw_skinned_sprite_cb(ECS *ecs, EntityId entity, void *component, void *userData) {

@@ -1,4 +1,5 @@
 #include "services/world/world_lua.h"
+#include <stdint.h>
 
 #include "lua.h"
 #include "lauxlib.h"
@@ -37,7 +38,7 @@ static int l_world_next_algorithm(lua_State *L) {
 
 static int l_world_set_level(lua_State *L) {
     World *w = world_from(L);
-    int level = (int)luaL_checkinteger(L, 1);
+    int32_t level = (int32_t)luaL_checkinteger(L, 1);
     if (w) world_set_pending_level(w, level);
     return 0;
 }
@@ -88,7 +89,7 @@ static int l_world_set_seed(lua_State *L) {
     World *w = world_from(L);
     lua_Integer seed = luaL_checkinteger(L, 1);
     if (seed < 0) seed = 0;
-    if (w) world_set_seed(w, (unsigned int)seed);
+    if (w) world_set_seed(w, (uint32_t)seed);
     return 0;
 }
 
@@ -180,7 +181,7 @@ static int l_world_plate_count(lua_State *L) {
 }
 static int l_world_set_plate_count(lua_State *L) {
     World *w = world_from(L);
-    if (w) world_set_plate_count(w, (int)luaL_checkinteger(L, 1));
+    if (w) world_set_plate_count(w, (int32_t)luaL_checkinteger(L, 1));
     return 0;
 }
 
@@ -191,7 +192,7 @@ static int l_world_view(lua_State *L) {
 }
 static int l_world_set_view(lua_State *L) {
     World *w = world_from(L);
-    if (w) world_set_view(w, (int)luaL_checkinteger(L, 1));
+    if (w) world_set_view(w, (int32_t)luaL_checkinteger(L, 1));
     return 0;
 }
 
@@ -249,7 +250,7 @@ static int l_world_neighbor_count(lua_State *L) {
 
 static int l_world_neighbor(lua_State *L) {
     World *w = world_from(L);
-    int slot = (int)luaL_checkinteger(L, 1) - 1;
+    int32_t slot = (int32_t)luaL_checkinteger(L, 1) - 1;
     WorldTileInfo info;
     if (!w || !world_neighbor_info(w, slot, &info)) { lua_pushnil(L); return 1; }
     push_tile_info(L, &info);

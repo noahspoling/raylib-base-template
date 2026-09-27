@@ -1,4 +1,5 @@
 #include "script_host.h"
+#include <stdint.h>
 #include "scene.h"
 #include "raylib.h"
 
@@ -29,9 +30,9 @@ typedef struct {
 
 typedef struct SceneEntry {
     char name[SCRIPT_HOST_NAME_MAX];
-    int scene_ref;
-    int update_ref;
-    int draw_ref;
+    int32_t scene_ref;
+    int32_t update_ref;
+    int32_t draw_ref;
     Scene scene;
 } SceneEntry;
 
@@ -84,9 +85,9 @@ static SceneEntry *top(ScriptHost *host) {
     return host->depth > 0 ? &host->stack[host->depth - 1] : NULL;
 }
 
-static void pcall_hook(ScriptHost *host, int nargs) {
+static void pcall_hook(ScriptHost *host, int32_t nargs) {
     lua_State *L = host->L;
-    int func_idx = lua_gettop(L) - nargs;
+    int32_t func_idx = lua_gettop(L) - nargs;
     lua_pushcfunction(L, l_traceback);
     lua_insert(L, func_idx);
     if (lua_pcall(L, nargs, 0, func_idx) != LUA_OK) {
@@ -119,7 +120,7 @@ static bool run_file(ScriptHost *host, const char *path) {
     }
     char chunkname[224];
     snprintf(chunkname, sizeof(chunkname), "@%s", path);
-    int rc = luaL_loadbuffer(L, text, strlen(text), chunkname);
+    int32_t rc = luaL_loadbuffer(L, text, strlen(text), chunkname);
     UnloadFileText(text);
     if (rc != LUA_OK) {
         set_error(host, lua_tostring(L, -1));
@@ -137,7 +138,7 @@ static bool run_file(ScriptHost *host, const char *path) {
     return true;
 }
 
-static int cache_hook_ref(lua_State *L, const char *hook) {
+static int32_t cache_hook_ref(lua_State *L, const char *hook) {
     lua_getfield(L, -1, hook);
     if (!lua_isfunction(L, -1)) {
         lua_pop(L, 1);
@@ -261,7 +262,7 @@ static int l_require(lua_State *L) {
     if (!text) return luaL_error(L, "module '%s' not found (%s)", mod, path);
     char chunkname[224];
     snprintf(chunkname, sizeof(chunkname), "@%s", path);
-    int rc = luaL_loadbuffer(L, text, strlen(text), chunkname);
+    int32_t rc = luaL_loadbuffer(L, text, strlen(text), chunkname);
     UnloadFileText(text);
     if (rc != LUA_OK) return lua_error(L);
     lua_call(L, 0, 1);
@@ -328,7 +329,7 @@ static int l_systems_enable(lua_State *L) {
     return 0;
 }
 
-static int key_from_name(const char *name) {
+static int32_t key_from_name(const char *name) {
     if (!name || !name[0]) return 0;
     if (!name[1]) {
         char c = name[0];
@@ -337,7 +338,7 @@ static int key_from_name(const char *name) {
         if (c >= '0' && c <= '9') return KEY_ZERO + (c - '0');
         return 0;
     }
-    static const struct { const char *n; int k; } named[] = {
+    static const struct { const char *n; int32_t k; } named[] = {
         {"space", KEY_SPACE}, {"enter", KEY_ENTER}, {"escape", KEY_ESCAPE},
         {"tab", KEY_TAB}, {"backspace", KEY_BACKSPACE},
         {"left", KEY_LEFT}, {"right", KEY_RIGHT}, {"up", KEY_UP}, {"down", KEY_DOWN},
@@ -350,17 +351,17 @@ static int key_from_name(const char *name) {
     return 0;
 }
 
-static int checkkey(lua_State *L) {
-    if (lua_type(L, 1) == LUA_TNUMBER) return (int)lua_tointeger(L, 1);
+static int32_t checkkey(lua_State *L) {
+    if (lua_type(L, 1) == LUA_TNUMBER) return (int32_t)lua_tointeger(L, 1);
     const char *name = luaL_checkstring(L, 1);
-    int key = key_from_name(name);
+    int32_t key = key_from_name(name);
     if (key == 0) return luaL_error(L, "unknown key name '%s'", name);
     return key;
 }
 
 static int l_input_key(lua_State *L) {
     const char *name = luaL_checkstring(L, 1);
-    int key = key_from_name(name);
+    int32_t key = key_from_name(name);
     if (key == 0) return luaL_error(L, "unknown key name '%s'", name);
     lua_pushinteger(L, key);
     return 1;
@@ -377,7 +378,7 @@ static int l_input_key_down(lua_State *L) {
 }
 
 static int l_input_mouse_pressed(lua_State *L) {
-    int button = (int)luaL_optinteger(L, 1, MOUSE_BUTTON_LEFT);
+    int32_t button = (int32_t)luaL_optinteger(L, 1, MOUSE_BUTTON_LEFT);
     lua_pushboolean(L, IsMouseButtonPressed(button));
     return 1;
 }
@@ -396,30 +397,30 @@ static int l_input_touch_pos(lua_State *L) {
     return 2;
 }
 
-static Color opt_color(lua_State *L, int idx, Color def) {
+static Color opt_color(lua_State *L, int32_t idx, Color def) {
     if (lua_gettop(L) < idx) return def;
     Color c;
-    c.r = (unsigned char)luaL_checkinteger(L, idx);
-    c.g = (unsigned char)luaL_checkinteger(L, idx + 1);
-    c.b = (unsigned char)luaL_checkinteger(L, idx + 2);
-    c.a = (unsigned char)luaL_optinteger(L, idx + 3, 255);
+    c.r = (uint8_t)luaL_checkinteger(L, idx);
+    c.g = (uint8_t)luaL_checkinteger(L, idx + 1);
+    c.b = (uint8_t)luaL_checkinteger(L, idx + 2);
+    c.a = (uint8_t)luaL_optinteger(L, idx + 3, 255);
     return c;
 }
 
 static int l_draw_text(lua_State *L) {
     const char *text = luaL_checkstring(L, 1);
-    int x = (int)luaL_checkinteger(L, 2);
-    int y = (int)luaL_checkinteger(L, 3);
-    int size = (int)luaL_checkinteger(L, 4);
+    int32_t x = (int32_t)luaL_checkinteger(L, 2);
+    int32_t y = (int32_t)luaL_checkinteger(L, 3);
+    int32_t size = (int32_t)luaL_checkinteger(L, 4);
     DrawText(text, x, y, size, opt_color(L, 5, RAYWHITE));
     return 0;
 }
 
 static int l_draw_rect(lua_State *L) {
-    int x = (int)luaL_checkinteger(L, 1);
-    int y = (int)luaL_checkinteger(L, 2);
-    int w = (int)luaL_checkinteger(L, 3);
-    int h = (int)luaL_checkinteger(L, 4);
+    int32_t x = (int32_t)luaL_checkinteger(L, 1);
+    int32_t y = (int32_t)luaL_checkinteger(L, 2);
+    int32_t w = (int32_t)luaL_checkinteger(L, 3);
+    int32_t h = (int32_t)luaL_checkinteger(L, 4);
     DrawRectangle(x, y, w, h, opt_color(L, 5, RAYWHITE));
     return 0;
 }
@@ -447,7 +448,7 @@ static int l_demo_count(lua_State *L) {
 }
 
 static int l_demo_row(lua_State *L) {
-    int i = (int)luaL_checkinteger(L, 1);
+    int32_t i = (int32_t)luaL_checkinteger(L, 1);
     if (i < 1 || i > DEMO_ROW_COUNT) { lua_pushnil(L); lua_pushnil(L); return 2; }
     char name[32], value[16];
     snprintf(name, sizeof(name), "Unit %03d", i);
@@ -665,9 +666,9 @@ void ScriptHost_update(ScriptHost *host, float dt) {
     }
 }
 
-static void draw_wrapped_text(const char *text, int x, int y, int font_size, int max_w) {
+static void draw_wrapped_text(const char *text, int32_t x, int32_t y, int32_t font_size, int32_t max_w) {
     char line[256];
-    int line_h = font_size + 4;
+    int32_t line_h = font_size + 4;
     const char *p = text;
     while (*p) {
         size_t n = 0;

@@ -1,4 +1,5 @@
 #include "components/tile.h"
+#include <stdint.h>
 
 const Color TILE_TERRAIN_COLORS[TILE_TERRAIN_COUNT] = {
     [TILE_TERRAIN_OCEAN]   = {  28,  62, 128, 255 },
@@ -17,7 +18,7 @@ const Color TILE_TERRAIN_COLORS[TILE_TERRAIN_COUNT] = {
     [TILE_TERRAIN_LAKE]       = {  46, 106, 168, 255 },
 };
 
-const char *tile_terrain_name(int terrain) {
+const char *tile_terrain_name(int32_t terrain) {
     switch (terrain) {
         case TILE_TERRAIN_OCEAN:   return "Ocean";
         case TILE_TERRAIN_SHALLOW: return "Shallows";

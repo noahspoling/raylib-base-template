@@ -1,4 +1,5 @@
 #include "services/world/world_pipeline.h"
+#include <stdint.h>
 
 #include <math.h>
 #include <stdlib.h>
@@ -15,8 +16,8 @@ static float    vlen(PlanetV3 a) { return sqrtf(dot(a, a)); }
 static PlanetV3 nrm(PlanetV3 a)  { float l = vlen(a); return l > 1e-6f ? scl(a, 1.0f / l) : a; }
 static float    clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
 
-static float hashf(unsigned int seed, int i, unsigned int salt) {
-    unsigned int h = (unsigned int)i * 2654435761u ^ (seed * 40503u + salt * 0x9e3779bbu);
+static float hashf(uint32_t seed, int32_t i, uint32_t salt) {
+    uint32_t h = (uint32_t)i * 2654435761u ^ (seed * 40503u + salt * 0x9e3779bbu);
     h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
     return (float)(h & 0xffffffu) / (float)0xffffffu;
 }
@@ -28,7 +29,7 @@ static void tangent_basis(PlanetV3 p, PlanetV3 *t1, PlanetV3 *t2) {
     *t2 = nrm(crs(p, *t1));
 }
 
-PlateField world_plate_field_build(int count, unsigned int seed) {
+PlateField world_plate_field_build(int32_t count, uint32_t seed) {
     PlateField pf = { 0, NULL, NULL, NULL, NULL, NULL };
     if (count < 2)  count = 2;
     if (count > 64) count = 64;
@@ -36,7 +37,7 @@ PlateField world_plate_field_build(int count, unsigned int seed) {
     pf.seed    = (PlanetV3 *)malloc((size_t)count * sizeof(PlanetV3));
     pf.axis    = (PlanetV3 *)malloc((size_t)count * sizeof(PlanetV3));
     pf.speed   = (float *)malloc((size_t)count * sizeof(float));
-    pf.oceanic = (unsigned char *)malloc((size_t)count);
+    pf.oceanic = (uint8_t *)malloc((size_t)count);
     if (!pf.seed || !pf.axis || !pf.speed || !pf.oceanic) {
         free(pf.seed); free(pf.axis); free(pf.speed); free(pf.oceanic);
         PlateField empty = { 0, NULL, NULL, NULL, NULL, NULL };
@@ -47,7 +48,7 @@ PlateField world_plate_field_build(int count, unsigned int seed) {
     float avg_spacing   = sqrtf(4.0f * 3.14159265f / (float)count);
     float jitter_radius = 0.55f * avg_spacing;
 
-    for (int i = 0; i < count; i++) {
+    for (int32_t i = 0; i < count; i++) {
         float yv = 1.0f - (2.0f * (float)i + 1.0f) / (float)count;
         float r2 = 1.0f - yv * yv;
         float r  = r2 > 0.0f ? sqrtf(r2) : 0.0f;
@@ -87,7 +88,7 @@ void world_plate_field_free(PlateField *pf) {
     pf->count = 0;
 }
 
-static PlanetV3 plate_velocity(const PlateField *pf, int plate, PlanetV3 pos) {
+static PlanetV3 plate_velocity(const PlateField *pf, int32_t plate, PlanetV3 pos) {
     return scl(crs(pf->axis[plate], pos), pf->speed[plate]);
 }
 
@@ -95,10 +96,10 @@ static PlanetV3 plate_velocity(const PlateField *pf, int plate, PlanetV3 pos) {
 
 void world_tectonics_run(WorldFields *f, const PlateField *pf) {
     const Planet *p = f->planet;
-    int n = f->count;
+    int32_t n = f->count;
 
     if (!pf || pf->count == 0 || !pf->index) {
-        for (int i = 0; i < n; i++) { f->plate[i] = -1; f->fault[i] = WORLD_FAULT_NONE; f->stress[i] = 0.0f; }
+        for (int32_t i = 0; i < n; i++) { f->plate[i] = -1; f->fault[i] = WORLD_FAULT_NONE; f->stress[i] = 0.0f; }
         return;
     }
 
@@ -111,19 +112,19 @@ void world_tectonics_run(WorldFields *f, const PlateField *pf) {
     const float ocean_bias = -0.10f;
     const float land_bias  =  0.05f;
 
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         PlanetV3 pos = p->pos[i];
-        int idx[TECT_BASELINE_K]; float d2[TECT_BASELINE_K];
-        int k = KDTree_nearest(pf->index, (const float *)&pos, TECT_BASELINE_K, idx, d2);
-        int plate_a = k > 0 ? idx[0] : -1;
+        int32_t idx[TECT_BASELINE_K]; float d2[TECT_BASELINE_K];
+        int32_t k = KDTree_nearest(pf->index, (const float *)&pos, TECT_BASELINE_K, idx, d2);
+        int32_t plate_a = k > 0 ? idx[0] : -1;
 
-        f->plate[i]  = plate_a;
+        f->plate[i]  = (int8_t)plate_a;
         f->fault[i]  = WORLD_FAULT_NONE;
         f->stress[i] = 0.0f;
         if (plate_a < 0) continue;
 
         float bsum = 0.0f, wsum = 0.0f;
-        for (int j = 0; j < k; j++) {
+        for (int32_t j = 0; j < k; j++) {
             float wgt = 1.0f / (d2[j] + 1e-4f);
             float b = pf->oceanic[idx[j]] ? ocean_bias : land_bias;
             bsum += wgt * b;
@@ -132,7 +133,7 @@ void world_tectonics_run(WorldFields *f, const PlateField *pf) {
         f->elevation[i] += wsum > 0.0f ? bsum / wsum : (pf->oceanic[plate_a] ? ocean_bias : land_bias);
 
         if (k >= 2) {
-            int plate_b = idx[1];
+            int32_t plate_b = idx[1];
             float dist_a = sqrtf(d2[0]), dist_b = sqrtf(d2[1]);
             float gap = dist_b - dist_a;
             float proximity = expf(-(gap * gap) / (2.0f * sigma * sigma));

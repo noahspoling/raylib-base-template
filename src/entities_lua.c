@@ -1,13 +1,13 @@
 #include "entities_lua.h"
+#include <stdint.h>
 #include "components/sprite.h"
 #include "components/skinned_sprite.h"
-#include "services/texture_store.h"
+#include "services/stores/texture_store.h"
 #include "raylib.h"
 
 #include "lua.h"
 #include "lauxlib.h"
 
-#include <stdio.h>
 #include <string.h>
 
 #if defined(__ANDROID__)
@@ -34,7 +34,7 @@ static GlobalState *state_from(lua_State *L) {
     return state;
 }
 
-static EntityId *check_entity(lua_State *L, int idx) {
+static EntityId *check_entity(lua_State *L, int32_t idx) {
     return (EntityId *)luaL_checkudata(L, idx, ENTITY_MT);
 }
 
@@ -99,13 +99,13 @@ static int l_entities_set_sprite(lua_State *L) {
     EntityId *e = check_entity(L, 1);
     SpriteComp sp;
     memset(&sp, 0, sizeof(sp));
-    sp.texture = (int)luaL_checkinteger(L, 2);
+    sp.texture = (int32_t)luaL_checkinteger(L, 2);
     sp.w = (float)luaL_checknumber(L, 3);
     sp.h = (float)luaL_checknumber(L, 4);
-    sp.tint.r = (unsigned char)luaL_optinteger(L, 5, 255);
-    sp.tint.g = (unsigned char)luaL_optinteger(L, 6, 255);
-    sp.tint.b = (unsigned char)luaL_optinteger(L, 7, 255);
-    sp.tint.a = (unsigned char)luaL_optinteger(L, 8, 255);
+    sp.tint.r = (uint8_t)luaL_optinteger(L, 5, 255);
+    sp.tint.g = (uint8_t)luaL_optinteger(L, 6, 255);
+    sp.tint.b = (uint8_t)luaL_optinteger(L, 7, 255);
+    sp.tint.a = (uint8_t)luaL_optinteger(L, 8, 255);
     if (lua_gettop(L) >= 12) {
         sp.src.x = (float)luaL_checknumber(L, 9);
         sp.src.y = (float)luaL_checknumber(L, 10);
@@ -131,14 +131,14 @@ static int l_entities_set_skinned_sprite(lua_State *L) {
     EntityId *e = check_entity(L, 1);
     SkinnedSpriteComp sk;
     memset(&sk, 0, sizeof(sk));
-    sk.anim_texture = (int)luaL_checkinteger(L, 2);
-    sk.skin_texture = (int)luaL_checkinteger(L, 3);
+    sk.anim_texture = (int32_t)luaL_checkinteger(L, 2);
+    sk.skin_texture = (int32_t)luaL_checkinteger(L, 3);
     sk.w = (float)luaL_checknumber(L, 4);
     sk.h = (float)luaL_checknumber(L, 5);
-    sk.tint.r = (unsigned char)luaL_optinteger(L, 6, 255);
-    sk.tint.g = (unsigned char)luaL_optinteger(L, 7, 255);
-    sk.tint.b = (unsigned char)luaL_optinteger(L, 8, 255);
-    sk.tint.a = (unsigned char)luaL_optinteger(L, 9, 255);
+    sk.tint.r = (uint8_t)luaL_optinteger(L, 6, 255);
+    sk.tint.g = (uint8_t)luaL_optinteger(L, 7, 255);
+    sk.tint.b = (uint8_t)luaL_optinteger(L, 8, 255);
+    sk.tint.a = (uint8_t)luaL_optinteger(L, 9, 255);
     if (lua_gettop(L) >= 13) {
         sk.src.x = (float)luaL_checknumber(L, 10);
         sk.src.y = (float)luaL_checknumber(L, 11);
@@ -158,12 +158,30 @@ static int l_entities_set_skinned_sprite(lua_State *L) {
     return 0;
 }
 
+static const char *asset_path(lua_State *L, int32_t idx) {
+    const char *rel = luaL_checkstring(L, idx);
+    lua_pushfstring(L, "%s%s", ASSET_PREFIX, rel);
+    return lua_tostring(L, -1);
+}
+
 static int l_textures_load(lua_State *L) {
-    const char *rel = luaL_checkstring(L, 1);
-    char path[256];
-    snprintf(path, sizeof(path), "%s%s", ASSET_PREFIX, rel);
-    lua_pushinteger(L, TextureStore_load(path));
+    lua_pushinteger(L, TextureStore_load(asset_path(L, 1)));
     return 1;
+}
+
+static int l_textures_register(lua_State *L) {
+    lua_pushinteger(L, TextureStore_register(asset_path(L, 1)));
+    return 1;
+}
+
+static int l_textures_acquire(lua_State *L) {
+    lua_pushboolean(L, TextureStore_acquire((int32_t)luaL_checkinteger(L, 1)));
+    return 1;
+}
+
+static int l_textures_release(lua_State *L) {
+    TextureStore_release((int32_t)luaL_checkinteger(L, 1));
+    return 0;
 }
 
 void entities_lua_register(ScriptHost *host, ECS *ecs, GlobalState *state) {
@@ -189,4 +207,7 @@ void entities_lua_register(ScriptHost *host, ECS *ecs, GlobalState *state) {
     ScriptHost_register_function(host, "entities", "set_sprite", l_entities_set_sprite);
     ScriptHost_register_function(host, "entities", "set_skinned_sprite", l_entities_set_skinned_sprite);
     ScriptHost_register_function(host, "textures", "load", l_textures_load);
+    ScriptHost_register_function(host, "textures", "register", l_textures_register);
+    ScriptHost_register_function(host, "textures", "acquire", l_textures_acquire);
+    ScriptHost_register_function(host, "textures", "release", l_textures_release);
 }

@@ -1,4 +1,5 @@
 #include "services/world/world.h"
+#include <stdint.h>
 #include "services/world/planet_render.h"
 #include "services/world/world_pipeline.h"
 #include "components/tile.h"
@@ -17,49 +18,49 @@ struct World {
 
     Planet *planet;
 
-    float         *elevation;
-    float         *temperature;
-    float         *humidity;
-    unsigned char *terrain;
-    float         *rainfall;
-    float         *moisture;
-    int           *downhill;
-    float         *flow;
-    unsigned char *river;
-    float         *water_level;
-    int           *region;
-    int           *plate;
-    unsigned char *fault;
-    float         *stress;
-    EntityId      *cells;
-    int            cell_cap;
-    WindField      wind;
-    PlateField     plate_field;
+    float          *elevation;
+    float          *temperature;
+    float          *humidity;
+    uint8_t        *terrain;
+    float          *rainfall;
+    float          *moisture;
+    int32_t        *downhill;
+    float          *flow;
+    uint8_t        *river;
+    float          *water_level;
+    int32_t        *region;
+    int8_t         *plate;
+    uint8_t        *fault;
+    float          *stress;
+    EntityId       *cells;
+    int32_t         cell_cap;
+    WindField       wind;
+    PlateField      plate_field;
 
-    int            gen_index;
+    int32_t        gen_index;
     WorldGenParams params;
 
-    int   pending_level;
-    bool  dirty;
+    int32_t pending_level;
+    bool    dirty;
 
-    Model model;
-    bool  model_valid;
-    Model river_model;
-    bool  river_valid;
-    int   view_mode;
+    Model   model;
+    bool    model_valid;
+    Model   river_model;
+    bool    river_valid;
+    int32_t view_mode;
 
-    int   gen_stage;
-    int   gen_target_level;
-    bool  gen_box_shown;
+    int32_t gen_stage;
+    int32_t gen_target_level;
+    bool    gen_box_shown;
 
     Camera3D cam;
     float yaw, pitch, dist;
     bool  auto_rotate;
 
-    int   ui_drag;
-    float ui_pending;
+    int32_t ui_drag;
+    float   ui_pending;
 
-    int     selected;
+    int32_t selected;
     bool    globe_pressed;
     Vector2 press_pos;
 
@@ -72,7 +73,7 @@ struct World {
 static void despawn_tiles(World *w) {
     if (!w->cells) return;
     EntityRegistry *reg = ECS_get_entity_registry(w->ecs);
-    for (int i = 0; i < w->cell_cap; i++) {
+    for (int32_t i = 0; i < w->cell_cap; i++) {
         if (ECS_has_component(w->ecs, w->cells[i], w->tile_type))
             ECS_remove_component(w->ecs, w->cells[i], w->tile_type);
         Entity_destroy(reg, w->cells[i]);
@@ -80,21 +81,21 @@ static void despawn_tiles(World *w) {
 }
 
 static bool alloc_and_spawn(World *w) {
-    int n = w->planet->cell_count;
-    int old_n = w->cell_cap;
+    int32_t n = w->planet->cell_count;
+    int32_t old_n = w->cell_cap;
     w->elevation   = (float *)realloc(w->elevation,   (size_t)n * sizeof(float));
     w->temperature = (float *)realloc(w->temperature, (size_t)n * sizeof(float));
     w->humidity    = (float *)realloc(w->humidity,    (size_t)n * sizeof(float));
-    w->terrain     = (unsigned char *)realloc(w->terrain, (size_t)n);
+    w->terrain     = (uint8_t *)realloc(w->terrain, (size_t)n);
     w->rainfall    = (float *)realloc(w->rainfall,    (size_t)n * sizeof(float));
     w->moisture    = (float *)realloc(w->moisture,    (size_t)n * sizeof(float));
-    w->downhill    = (int *)realloc(w->downhill,      (size_t)n * sizeof(int));
+    w->downhill    = (int32_t *)realloc(w->downhill,      (size_t)n * sizeof(int32_t));
     w->flow        = (float *)realloc(w->flow,        (size_t)n * sizeof(float));
-    w->river       = (unsigned char *)realloc(w->river, (size_t)n);
+    w->river       = (uint8_t *)realloc(w->river, (size_t)n);
     w->water_level = (float *)realloc(w->water_level, (size_t)n * sizeof(float));
-    w->region      = (int *)realloc(w->region,        (size_t)n * sizeof(int));
-    w->plate       = (int *)realloc(w->plate,          (size_t)n * sizeof(int));
-    w->fault       = (unsigned char *)realloc(w->fault, (size_t)n);
+    w->region      = (int32_t *)realloc(w->region,        (size_t)n * sizeof(int32_t));
+    w->plate       = (int8_t *)realloc(w->plate,           (size_t)n * sizeof(int8_t));
+    w->fault       = (uint8_t *)realloc(w->fault, (size_t)n);
     w->stress      = (float *)realloc(w->stress,       (size_t)n * sizeof(float));
     w->cells       = (EntityId *)realloc(w->cells, (size_t)n * sizeof(EntityId));
     if (!w->elevation || !w->temperature || !w->humidity || !w->terrain ||
@@ -105,12 +106,12 @@ static bool alloc_and_spawn(World *w) {
 
     EntityRegistry *reg = ECS_get_entity_registry(w->ecs);
 
-    for (int i = n; i < old_n; i++) {
+    for (int32_t i = n; i < old_n; i++) {
         if (ECS_has_component(w->ecs, w->cells[i], w->tile_type))
             ECS_remove_component(w->ecs, w->cells[i], w->tile_type);
         Entity_destroy(reg, w->cells[i]);
     }
-    for (int i = old_n; i < n; i++) {
+    for (int32_t i = old_n; i < n; i++) {
         w->cells[i] = Entity_create(reg);
         TileComp tc = { .cell = i, .elevation = 0, .temperature = 0, .humidity = 0,
                         .terrain = TILE_TERRAIN_OCEAN };
@@ -135,13 +136,13 @@ WorldFields world_fields(const World *w) {
 
 static Color lerp_col(Color a, Color b, float t) {
     if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
-    Color c = { (unsigned char)(a.r + (b.r - a.r) * t),
-                (unsigned char)(a.g + (b.g - a.g) * t),
-                (unsigned char)(a.b + (b.b - a.b) * t), 255 };
+    Color c = { (uint8_t)(a.r + (b.r - a.r) * t),
+                (uint8_t)(a.g + (b.g - a.g) * t),
+                (uint8_t)(a.b + (b.b - a.b) * t), 255 };
     return c;
 }
 
-static Color view_color(const World *w, int c) {
+static Color view_color(const World *w, int32_t c) {
     bool ocean = w->elevation[c] < w->params.sea_level;
     switch (w->view_mode) {
     case WORLD_VIEW_TEMPERATURE:
@@ -157,10 +158,10 @@ static Color view_color(const World *w, int c) {
     }
     case WORLD_VIEW_REGION: {
         if (w->region[c] < 0) return (Color){ 40, 48, 60, 255 };
-        unsigned int h = (unsigned int)(w->region[c] + 1) * 2654435761u;
-        return (Color){ (unsigned char)(60 + h % 180),
-                        (unsigned char)(60 + (h >> 8) % 180),
-                        (unsigned char)(60 + (h >> 16) % 180), 255 };
+        uint32_t h = (uint32_t)(w->region[c] + 1) * 2654435761u;
+        return (Color){ (uint8_t)(60 + h % 180),
+                        (uint8_t)(60 + (h >> 8) % 180),
+                        (uint8_t)(60 + (h >> 16) % 180), 255 };
     }
     case WORLD_VIEW_WIND: {
         PlanetV3 dir = world_wind_sample(&w->wind, w->planet->pos[c]);
@@ -189,10 +190,10 @@ static Color view_color(const World *w, int c) {
             return lerp_col((Color){ 40, 40, 46, 255 }, fc, t);
         }
         if (w->plate[c] < 0) return (Color){ 40, 40, 46, 255 };
-        unsigned int h = (unsigned int)(w->plate[c] + 1) * 2654435761u;
-        Color base = { (unsigned char)(50 + h % 160),
-                       (unsigned char)(50 + (h >> 8) % 160),
-                       (unsigned char)(50 + (h >> 16) % 160), 255 };
+        uint32_t h = (uint32_t)(w->plate[c] + 1) * 2654435761u;
+        Color base = { (uint8_t)(50 + h % 160),
+                       (uint8_t)(50 + (h >> 8) % 160),
+                       (uint8_t)(50 + (h >> 16) % 160), 255 };
         return ocean ? lerp_col((Color){ 10, 12, 20, 255 }, base, 0.5f) : base;
     }
     default:
@@ -206,17 +207,17 @@ static void world_recolor(World *w) {
         planet_model_update_colors(&w->model, w->planet, w->terrain);
         return;
     }
-    int n = w->planet->cell_count;
+    int32_t n = w->planet->cell_count;
     Color *cols = (Color *)malloc((size_t)n * sizeof(Color));
     if (!cols) return;
-    for (int c = 0; c < n; c++) cols[c] = view_color(w, c);
+    for (int32_t c = 0; c < n; c++) cols[c] = view_color(w, c);
     planet_model_apply_colors(&w->model, w->planet, cols);
     free(cols);
 }
 
 static void stage_sample(World *w) {
     const WorldGenerator *g = world_gen_get(w->gen_index);
-    for (int i = 0; i < w->planet->cell_count; i++) {
+    for (int32_t i = 0; i < w->planet->cell_count; i++) {
         WorldGenSample s = g->sample(g, &w->params, w->planet->pos[i], i);
         w->elevation[i]   = s.elevation;
         w->temperature[i] = s.temperature;
@@ -244,7 +245,7 @@ static void stage_biomes(World *w) {
 static void build_river_mesh(World *w);
 
 static void stage_finalize(World *w) {
-    for (int i = 0; i < w->planet->cell_count; i++) {
+    for (int32_t i = 0; i < w->planet->cell_count; i++) {
         TileComp *tc = (TileComp *)ECS_get_component(w->ecs, w->cells[i], w->tile_type);
         if (tc) {
             tc->cell        = i;
@@ -315,26 +316,26 @@ void world_step_generation(World *w) {
     if (w->gen_stage >= GEN_STAGE_COUNT) w->gen_stage = GEN_IDLE;
 }
 
-bool world_generating(const World *w) { return w->gen_stage != GEN_IDLE; }
-int  world_gen_stage(const World *w)  { return w->gen_stage; }
-int  world_gen_stage_count(void)      { return GEN_STAGE_COUNT; }
+bool    world_generating(const World *w) { return w->gen_stage != GEN_IDLE; }
+int32_t world_gen_stage(const World *w)  { return w->gen_stage; }
+int32_t world_gen_stage_count(void)      { return GEN_STAGE_COUNT; }
 const char *world_gen_stage_name(const World *w) {
-    int s = w->gen_stage;
+    int32_t s = w->gen_stage;
     return (s > 0 && s < GEN_STAGE_COUNT) ? GEN_STAGE_NAMES[s] : "";
 }
 
 void world_reroll(World *w) {
-    w->params.seed = (unsigned int)GetRandomValue(1, 1 << 30);
+    w->params.seed = (uint32_t)GetRandomValue(1, 1 << 30);
     w->dirty = true;
 }
 
-void world_set_seed(World *w, unsigned int seed) {
+void world_set_seed(World *w, uint32_t seed) {
     if (w->params.seed == seed) return;
     w->params.seed = seed;
     w->dirty = true;
 }
 
-World *world_create(ECS *ecs, ComponentTypeId tile_type, int level) {
+World *world_create(ECS *ecs, ComponentTypeId tile_type, int32_t level) {
     World *w = (World *)calloc(1, sizeof(World));
     if (!w) return NULL;
     w->ecs = ecs;
@@ -377,7 +378,7 @@ void world_destroy(World *w) {
 }
 
 void world_apply(World *w) {
-    int target = w->pending_level;
+    int32_t target = w->pending_level;
     if (target < 0) target = 0;
     if (target > PLANET_MAX_LEVEL) target = PLANET_MAX_LEVEL;
     w->gen_target_level = target;
@@ -390,26 +391,26 @@ static void world_apply_sync(World *w) {
     while (w->gen_stage != GEN_IDLE) world_step_generation(w);
 }
 
-void world_set_level(World *w, int level) {
+void world_set_level(World *w, int32_t level) {
     w->pending_level = level;
     world_apply_sync(w);
 }
 
-void world_set_pending_level(World *w, int level) {
+void world_set_pending_level(World *w, int32_t level) {
     if (level < 0) level = 0;
     if (level > PLANET_MAX_LEVEL) level = PLANET_MAX_LEVEL;
     if (level != w->pending_level) { w->pending_level = level; w->dirty = true; }
 }
 
-int  world_pending_level(const World *w) { return w->pending_level; }
-bool world_dirty(const World *w)         { return w->dirty; }
+int32_t world_pending_level(const World *w) { return w->pending_level; }
+bool    world_dirty(const World *w)         { return w->dirty; }
 
-int world_selected(const World *w) { return w->selected; }
+int32_t world_selected(const World *w) { return w->selected; }
 
 void world_clear_selection(World *w) { w->selected = -1; }
 
 bool world_selected_info(const World *w, WorldTileInfo *out) {
-    int c = w->selected;
+    int32_t c = w->selected;
     if (c < 0 || c >= w->planet->cell_count) return false;
     PlanetV3 p = w->planet->pos[c];
     out->cell        = c;
@@ -430,7 +431,7 @@ bool world_selected_info(const World *w, WorldTileInfo *out) {
     return true;
 }
 
-static void fill_tile_info(const World *w, int c, WorldTileInfo *out) {
+static void fill_tile_info(const World *w, int32_t c, WorldTileInfo *out) {
     PlanetV3 p = w->planet->pos[c];
     out->cell        = c;
     out->elevation   = w->elevation[c];
@@ -449,18 +450,18 @@ static void fill_tile_info(const World *w, int c, WorldTileInfo *out) {
     out->neighbors   = w->planet->degree[c];
 }
 
-int world_neighbor_count(const World *w) {
-    int c = w->selected;
+int32_t world_neighbor_count(const World *w) {
+    int32_t c = w->selected;
     if (c < 0 || c >= w->planet->cell_count) return 0;
     return w->planet->degree[c];
 }
 
-bool world_neighbor_info(const World *w, int slot, WorldTileInfo *out) {
-    int c = w->selected;
+bool world_neighbor_info(const World *w, int32_t slot, WorldTileInfo *out) {
+    int32_t c = w->selected;
     if (c < 0 || c >= w->planet->cell_count) return false;
-    int deg = w->planet->degree[c];
+    int32_t deg = w->planet->degree[c];
     if (slot < 0 || slot >= deg) return false;
-    int nb = w->planet->neighbors[c][slot];
+    int32_t nb = w->planet->neighbors[c][slot];
     if (nb < 0 || nb >= w->planet->cell_count) return false;
     fill_tile_info(w, nb, out);
     return true;
@@ -484,7 +485,7 @@ static bool project_to_globe_rect(const World *w, PlanetV3 pos, float *out_x, fl
 }
 
 bool world_selected_screen_pos(const World *w, float *out_x, float *out_y) {
-    int c = w->selected;
+    int32_t c = w->selected;
     if (c < 0 || c >= w->planet->cell_count) return false;
     PlanetV3 p = w->planet->pos[c];
     Vector3 camDir = Vector3Normalize(w->cam.position);
@@ -499,17 +500,17 @@ void world_set_input_suppressed(World *w, bool suppressed) {
     w->input_suppressed = suppressed;
 }
 
-int world_level(const World *w)      { return w->planet->level; }
-int world_cell_count(const World *w) { return w->planet->cell_count; }
+int32_t world_level(const World *w)      { return w->planet->level; }
+int32_t world_cell_count(const World *w) { return w->planet->cell_count; }
 
-void world_set_generator(World *w, int index) {
-    int n = world_gen_count();
+void world_set_generator(World *w, int32_t index) {
+    int32_t n = world_gen_count();
     w->gen_index = ((index % n) + n) % n;
     w->dirty = true;
 }
-int          world_generator_index(const World *w) { return w->gen_index; }
-const char  *world_generator_name(const World *w)  { return world_gen_name(w->gen_index); }
-unsigned int world_seed(const World *w)            { return w->params.seed; }
+int32_t         world_generator_index(const World *w) { return w->gen_index; }
+const char     *world_generator_name(const World *w)  { return world_gen_name(w->gen_index); }
+uint32_t        world_seed(const World *w)            { return w->params.seed; }
 WorldGenParams *world_params(World *w)             { return &w->params; }
 
 void world_set_sea_level(World *w, float v) {
@@ -544,22 +545,22 @@ void world_set_river_density(World *w, float v) {
     w->params.river_density = Clamp(v, 0.0f, 2.0f);
     w->dirty = true;
 }
-void world_set_plate_count(World *w, int v) {
+void world_set_plate_count(World *w, int32_t v) {
     if (v < 2) v = 2; else if (v > 64) v = 64;
-    if (w->params.plate_count != v) { w->params.plate_count = v; w->dirty = true; }
+    if (w->params.plate_count != v) { w->params.plate_count = (uint8_t)v; w->dirty = true; }
 }
 
-void world_set_view(World *w, int mode) {
+void world_set_view(World *w, int32_t mode) {
     if (mode < 0 || mode >= WORLD_VIEW_COUNT) return;
     w->view_mode = mode;
     world_recolor(w);
 }
-int world_view(const World *w) { return w->view_mode; }
+int32_t world_view(const World *w) { return w->view_mode; }
 
 static void begin_mode3d_rect(Camera3D camera, float x, float y, float fw, float fh) {
-    int screen_h = GetScreenHeight();
+    int32_t screen_h = GetScreenHeight();
     rlDrawRenderBatchActive();
-    rlViewport((int)x, screen_h - (int)(y + fh), (int)fw, (int)fh);
+    rlViewport((int32_t)x, screen_h - (int32_t)(y + fh), (int32_t)fw, (int32_t)fh);
 
     rlMatrixMode(RL_PROJECTION);
     rlPushMatrix();
@@ -586,7 +587,7 @@ static void end_mode3d_rect(void) {
     rlViewport(0, 0, GetScreenWidth(), GetScreenHeight());
 }
 
-static int world_pick(const World *w, float mx, float my, float x, float y, float fw, float fh) {
+static int32_t world_pick(const World *w, float mx, float my, float x, float y, float fw, float fh) {
     float ndcx = 2.0f * (mx - x) / fw - 1.0f;
     float ndcy = 1.0f - 2.0f * (my - y) / fh;
     Vector3 fwd   = Vector3Normalize(Vector3Subtract(w->cam.target, w->cam.position));
@@ -607,8 +608,8 @@ static int world_pick(const World *w, float mx, float my, float x, float y, floa
     if (t < 0.0f) return -1;
     Vector3 hit = Vector3Normalize(Vector3Add(O, Vector3Scale(dir, t)));
 
-    int best = -1; float bestdot = -2.0f;
-    for (int i = 0; i < w->planet->cell_count; i++) {
+    int32_t best = -1; float bestdot = -2.0f;
+    for (int32_t i = 0; i < w->planet->cell_count; i++) {
         PlanetV3 p = w->planet->pos[i];
         float d = hit.x * p.x + hit.y * p.y + hit.z * p.z;
         if (d > bestdot) { bestdot = d; best = i; }
@@ -624,11 +625,11 @@ static Vector3 nudge_to_cam(Vector3 v, Vector3 cam, float eps) {
 static void draw_selection_highlight(const World *w) {
     if (w->selected < 0 || w->selected >= w->planet->cell_count) return;
     const Planet *p = w->planet;
-    int c = w->selected, deg = p->degree[c];
+    int32_t c = w->selected, deg = p->degree[c];
     Vector3 cam = w->cam.position;
     const float eps = 0.008f;
     Vector3 ctr = nudge_to_cam((Vector3){ p->pos[c].x, p->pos[c].y, p->pos[c].z }, cam, eps);
-    for (int k = 0; k < deg; k++) {
+    for (int32_t k = 0; k < deg; k++) {
         PlanetV3 a = p->corner_pos[p->cell_corners[c][k]];
         PlanetV3 b = p->corner_pos[p->cell_corners[c][(k + 1) % deg]];
         Vector3 A = nudge_to_cam((Vector3){ a.x, a.y, a.z }, cam, eps);
@@ -639,23 +640,23 @@ static void draw_selection_highlight(const World *w) {
 }
 
 static void draw_loading_box(const World *w, float x, float y, float fw, float fh) {
-    const int pad = 16, titleH = 26, lineH = 22, boxW = 232;
-    int rows = GEN_STAGE_COUNT - 1;
-    int boxH = pad * 2 + titleH + rows * lineH + 8;
-    int bx = (int)(x + (fw - boxW) * 0.5f);
-    int by = (int)(y + (fh - boxH) * 0.5f);
+    const int32_t pad = 16, titleH = 26, lineH = 22, boxW = 232;
+    int32_t rows = GEN_STAGE_COUNT - 1;
+    int32_t boxH = pad * 2 + titleH + rows * lineH + 8;
+    int32_t bx = (int32_t)(x + (fw - boxW) * 0.5f);
+    int32_t by = (int32_t)(y + (fh - boxH) * 0.5f);
 
     DrawRectangle(bx, by, boxW, boxH, (Color){ 16, 18, 26, 235 });
     DrawRectangleLines(bx, by, boxW, boxH, (Color){ 70, 120, 180, 255 });
     DrawText("Generating world", bx + pad, by + pad, 18, (Color){ 220, 224, 232, 255 });
 
-    int barY = by + pad + titleH - 6;
+    int32_t barY = by + pad + titleH - 6;
     float prog = (float)(w->gen_stage - 1) / (float)(GEN_STAGE_COUNT - 1);
     DrawRectangle(bx + pad, barY, boxW - 2 * pad, 4, (Color){ 40, 44, 54, 255 });
-    DrawRectangle(bx + pad, barY, (int)((boxW - 2 * pad) * prog), 4, (Color){ 90, 150, 210, 255 });
+    DrawRectangle(bx + pad, barY, (int32_t)((boxW - 2 * pad) * prog), 4, (Color){ 90, 150, 210, 255 });
 
-    int ty = by + pad + titleH + 8;
-    for (int s = 1; s < GEN_STAGE_COUNT; s++) {
+    int32_t ty = by + pad + titleH + 8;
+    for (int32_t s = 1; s < GEN_STAGE_COUNT; s++) {
         Color c; const char *mark;
         if      (s <  w->gen_stage) { c = (Color){ 120, 190, 130, 255 }; mark = "[x]"; }
         else if (s == w->gen_stage) { c = (Color){ 235, 205,  90, 255 }; mark = "[>]"; }
@@ -669,30 +670,30 @@ static void build_river_mesh(World *w) {
     const Planet *p = w->planet;
     if (w->river_valid) { planet_model_unload(&w->river_model); w->river_valid = false; }
 
-    int nseg = 0;
-    for (int c = 0; c < p->cell_count; c++)
+    int32_t nseg = 0;
+    for (int32_t c = 0; c < p->cell_count; c++)
         if (w->river[c] && w->downhill[c] >= 0) nseg++;
     if (nseg == 0) return;
 
-    int segs = 8 - p->level;
+    int32_t segs = 8 - p->level;
     if (segs < 1) segs = 1; if (segs > 4) segs = 4;
 
-    int tris  = nseg * segs * 2;
-    int verts = tris * 3;
+    int32_t tris  = nseg * segs * 2;
+    int32_t verts = tris * 3;
     Mesh mesh = { 0 };
     mesh.triangleCount = tris;
     mesh.vertexCount   = verts;
-    mesh.vertices = (float *)MemAlloc((unsigned)verts * 3 * sizeof(float));
-    mesh.normals  = (float *)MemAlloc((unsigned)verts * 3 * sizeof(float));
-    mesh.colors   = (unsigned char *)MemAlloc((unsigned)verts * 4);
+    mesh.vertices = (float *)MemAlloc((uint32_t)verts * 3 * sizeof(float));
+    mesh.normals  = (float *)MemAlloc((uint32_t)verts * 3 * sizeof(float));
+    mesh.colors   = (uint8_t *)MemAlloc((uint32_t)verts * 4);
 
     float base = 0.128f / (float)p->frequency;
     const Color col = { 55, 120, 205, 255 };
-    int vi = 0;
-    for (int c = 0; c < p->cell_count; c++) {
-        int order = w->river[c];
+    int32_t vi = 0;
+    for (int32_t c = 0; c < p->cell_count; c++) {
+        int32_t order = w->river[c];
         if (order == 0) continue;
-        int d = w->downhill[c];
+        int32_t d = w->downhill[c];
         if (d < 0) continue;
 
         float r    = base * (0.5f + 0.5f * (float)order);
@@ -702,7 +703,7 @@ static void build_river_mesh(World *w) {
         Vector3 dir = Vector3Normalize(Vector3Subtract(b, a));
 
         Vector3 pL = {0}, pR = {0};
-        for (int s = 0; s <= segs; s++) {
+        for (int32_t s = 0; s <= segs; s++) {
             float t = (float)s / (float)segs;
             Vector3 on   = Vector3Normalize(Vector3Lerp(a, b, t));
             Vector3 perp = Vector3Normalize(Vector3CrossProduct(dir, on));
@@ -710,7 +711,7 @@ static void build_river_mesh(World *w) {
             Vector3 R = Vector3Scale(Vector3Normalize(Vector3Subtract(on, Vector3Scale(perp, r))), lift);
             if (s > 0) {
                 Vector3 quad[6] = { pL, pR, R, pL, R, L };
-                for (int k = 0; k < 6; k++) {
+                for (int32_t k = 0; k < 6; k++) {
                     Vector3 V = quad[k], N = Vector3Normalize(V);
                     mesh.vertices[vi*3+0] = V.x; mesh.vertices[vi*3+1] = V.y; mesh.vertices[vi*3+2] = V.z;
                     mesh.normals[vi*3+0]  = N.x; mesh.normals[vi*3+1]  = N.y; mesh.normals[vi*3+2]  = N.z;
@@ -769,7 +770,7 @@ void world_draw_in_rect(World *w, float x, float y, float fw, float fh) {
     };
 
     if (w->model_valid) {
-        BeginScissorMode((int)x, (int)y, (int)fw, (int)fh);
+        BeginScissorMode((int32_t)x, (int32_t)y, (int32_t)fw, (int32_t)fh);
         begin_mode3d_rect(w->cam, x, y, fw, fh);
         DrawModel(w->model, (Vector3){ 0, 0, 0 }, 1.0f, WHITE);
         if (w->river_valid) {
@@ -808,7 +809,7 @@ void world_draw_controls_in_rect(World *w, float x, float y, float fw, float fh)
     const float mins[WORLD_CTL_COUNT]   = { -0.6f, -0.5f, 0.2f, 0.6f, 0.0f, 0.0f, 0.2f, 0.0f, 2.0f };
     const float maxs[WORLD_CTL_COUNT]   = {  0.6f,  0.5f, 0.9f, 4.0f,
                                             (float)PLANET_MAX_LEVEL, 1.0f, 3.0f, 2.0f, 24.0f };
-    const int   fmt[WORLD_CTL_COUNT] = { FMT_FLOAT, FMT_FLOAT, FMT_FLOAT, FMT_FLOAT, FMT_LEVEL,
+    const int32_t   fmt[WORLD_CTL_COUNT] = { FMT_FLOAT, FMT_FLOAT, FMT_FLOAT, FMT_FLOAT, FMT_LEVEL,
                                          FMT_FLOAT, FMT_FLOAT, FMT_FLOAT, FMT_INT };
     WorldGenParams *p = &w->params;
     const float cur[WORLD_CTL_COUNT] = {
@@ -827,13 +828,13 @@ void world_draw_controls_in_rect(World *w, float x, float y, float fw, float fh)
     float trackW = trackX1 - trackX0;
     float rowh = fh / (float)WORLD_CTL_COUNT;
 
-    for (int i = 0; i < WORLD_CTL_COUNT; i++) {
+    for (int32_t i = 0; i < WORLD_CTL_COUNT; i++) {
         float trackY = y + (i + 0.5f) * rowh;
         Rectangle hit = { trackX0 - 8, trackY - 12, trackW + 16, 24 };
         if (pressed && CheckCollisionPointRec(m, hit)) w->ui_drag = i;
 
         float value = cur[i];
-        int active = (w->ui_drag == i);
+        int32_t active = (w->ui_drag == i);
         if (active) {
             float t = Clamp((m.x - trackX0) / trackW, 0.0f, 1.0f);
             value = mins[i] + t * (maxs[i] - mins[i]);
@@ -843,19 +844,19 @@ void world_draw_controls_in_rect(World *w, float x, float y, float fw, float fh)
 
         float tnorm = (value - mins[i]) / (maxs[i] - mins[i]);
         float hx = trackX0 + trackW * tnorm;
-        DrawText(labels[i], (int)x, (int)(trackY - 8), 16, (Color){ 200, 204, 212, 255 });
-        DrawRectangle((int)trackX0, (int)(trackY - 3), (int)trackW, 6, (Color){ 58, 62, 72, 255 });
-        DrawRectangle((int)trackX0, (int)(trackY - 3), (int)(trackW * tnorm), 6, (Color){ 90, 140, 200, 255 });
-        DrawRectangle((int)(hx - 5), (int)(trackY - 9), 10, 18,
+        DrawText(labels[i], (int32_t)x, (int32_t)(trackY - 8), 16, (Color){ 200, 204, 212, 255 });
+        DrawRectangle((int32_t)trackX0, (int32_t)(trackY - 3), (int32_t)trackW, 6, (Color){ 58, 62, 72, 255 });
+        DrawRectangle((int32_t)trackX0, (int32_t)(trackY - 3), (int32_t)(trackW * tnorm), 6, (Color){ 90, 140, 200, 255 });
+        DrawRectangle((int32_t)(hx - 5), (int32_t)(trackY - 9), 10, 18,
                       active ? RAYWHITE : (Color){ 214, 218, 224, 255 });
-        const char *vt = fmt[i] == FMT_LEVEL ? TextFormat("L%d", (int)value)
-                        : fmt[i] == FMT_INT  ? TextFormat("%d", (int)value)
+        const char *vt = fmt[i] == FMT_LEVEL ? TextFormat("L%d", (int32_t)value)
+                        : fmt[i] == FMT_INT  ? TextFormat("%d", (int32_t)value)
                                              : TextFormat("%+.2f", value);
-        DrawText(vt, (int)(trackX1 + 8), (int)(trackY - 8), 16, (Color){ 200, 204, 212, 255 });
+        DrawText(vt, (int32_t)(trackX1 + 8), (int32_t)(trackY - 8), 16, (Color){ 200, 204, 212, 255 });
     }
 
     if (released && w->ui_drag >= 0) {
-        int i = w->ui_drag;
+        int32_t i = w->ui_drag;
         float v = w->ui_pending;
         w->ui_drag = -1;
         switch (i) {
@@ -863,11 +864,11 @@ void world_draw_controls_in_rect(World *w, float x, float y, float fw, float fh)
             case CTL_TEMP:       world_set_warmth(w, v);           break;
             case CTL_MTN:        world_set_mountain_level(w, v);   break;
             case CTL_DETAIL:     world_set_noise_scale(w, v);      break;
-            case CTL_LEVEL:      world_set_pending_level(w, (int)v); break;
+            case CTL_LEVEL:      world_set_pending_level(w, (int32_t)v); break;
             case CTL_RAINSHADOW: world_set_rain_shadow(w, v);      break;
             case CTL_MOISTURE:   world_set_moisture_reach(w, v);   break;
             case CTL_RIVER:      world_set_river_density(w, v);    break;
-            case CTL_PLATES:     world_set_plate_count(w, (int)v); break;
+            case CTL_PLATES:     world_set_plate_count(w, (int32_t)v); break;
         }
     }
 }

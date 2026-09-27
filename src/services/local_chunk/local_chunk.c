@@ -1,4 +1,5 @@
 #include "services/local_chunk/local_chunk.h"
+#include <stdint.h>
 #include "services/world_noise.h"
 #include "services/world/world_gen.h"
 
@@ -33,12 +34,12 @@ static void project_local(PlanetV3 center, PlanetV3 tan, PlanetV3 bit,
     *ly = v3dot(d, bit);
 }
 
-static PlanetV3 edge_midpoint(const Planet *p, int cellA, int cellB) {
-    int shared[2], n = 0;
-    int degA = p->degree[cellA], degB = p->degree[cellB];
-    for (int k = 0; k < degA && n < 2; k++) {
-        int corner = p->cell_corners[cellA][k];
-        for (int j = 0; j < degB; j++) {
+static PlanetV3 edge_midpoint(const Planet *p, int32_t cellA, int32_t cellB) {
+    int32_t shared[2], n = 0;
+    int32_t degA = p->degree[cellA], degB = p->degree[cellB];
+    for (int32_t k = 0; k < degA && n < 2; k++) {
+        int32_t corner = p->cell_corners[cellA][k];
+        for (int32_t j = 0; j < degB; j++) {
             if (p->cell_corners[cellB][j] == corner) { shared[n++] = corner; break; }
         }
     }
@@ -46,10 +47,10 @@ static PlanetV3 edge_midpoint(const Planet *p, int cellA, int cellB) {
     return v3norm(v3scale(v3add(p->corner_pos[shared[0]], p->corner_pos[shared[1]]), 0.5f));
 }
 
-int local_chunk_stage_count(void);
-const LocalChunkStage *local_chunk_stage_get(int index);
+int32_t local_chunk_stage_count(void);
+const LocalChunkStage *local_chunk_stage_get(int32_t index);
 
-unsigned int local_chunk_cache_key(unsigned int world_seed, int cell) {
+uint32_t local_chunk_cache_key(uint32_t world_seed, int32_t cell) {
     return world_noise_hash3(cell, 0, 0, world_seed);
 }
 
@@ -62,16 +63,16 @@ void local_chunk_north_frame(PlanetV3 center, PlanetV3 *east, PlanetV3 *north) {
     *east  = v3norm(v3cross(*north, center));
 }
 
-static void pick_north_south_slot(const Planet *planet, int cell, int *outN, int *outS) {
+static void pick_north_south_slot(const Planet *planet, int32_t cell, int32_t *outN, int32_t *outS) {
     PlanetV3 center = planet->pos[cell];
     PlanetV3 east, north;
     local_chunk_north_frame(center, &east, &north);
 
-    int deg = planet->degree[cell];
-    int bestN = -1; float bestNdot = -2.0f;
-    int bestS = -1; float bestSdot = -2.0f;
-    for (int k = 0; k < deg; k++) {
-        int nb = planet->neighbors[cell][k];
+    int32_t deg = planet->degree[cell];
+    int32_t bestN = -1; float bestNdot = -2.0f;
+    int32_t bestS = -1; float bestSdot = -2.0f;
+    for (int32_t k = 0; k < deg; k++) {
+        int32_t nb = planet->neighbors[cell][k];
         if (nb < 0) continue;
         PlanetV3 mid = edge_midpoint(planet, cell, nb);
         float lx, ly;
@@ -86,38 +87,38 @@ static void pick_north_south_slot(const Planet *planet, int cell, int *outN, int
     *outS = bestS;
 }
 
-LocalChunkEdgeRole local_chunk_edge_role(const Planet *planet, int cell, int neighborSlot) {
-    int deg = planet->degree[cell];
+LocalChunkEdgeRole local_chunk_edge_role(const Planet *planet, int32_t cell, int32_t neighborSlot) {
+    int32_t deg = planet->degree[cell];
     if (neighborSlot < 0 || neighborSlot >= deg) return LOCAL_CHUNK_EDGE_CLEAN;
-    int nb = planet->neighbors[cell][neighborSlot];
+    int32_t nb = planet->neighbors[cell][neighborSlot];
     if (nb < 0) return LOCAL_CHUNK_EDGE_CLEAN;
 
-    int aN, aS;
+    int32_t aN, aS;
     pick_north_south_slot(planet, cell, &aN, &aS);
     LocalChunkEdgeRole roleFromA;
     if      (neighborSlot == aN) roleFromA = LOCAL_CHUNK_EDGE_NORTH;
     else if (neighborSlot == aS) roleFromA = LOCAL_CHUNK_EDGE_SOUTH;
     else                         return LOCAL_CHUNK_EDGE_CLEAN;
 
-    int degB = planet->degree[nb];
-    int slotOfCellInB = -1;
-    for (int k = 0; k < degB; k++) {
+    int32_t degB = planet->degree[nb];
+    int32_t slotOfCellInB = -1;
+    for (int32_t k = 0; k < degB; k++) {
         if (planet->neighbors[nb][k] == cell) { slotOfCellInB = k; break; }
     }
     if (slotOfCellInB < 0) return LOCAL_CHUNK_EDGE_CLEAN;
 
-    int bN, bS;
+    int32_t bN, bS;
     pick_north_south_slot(planet, nb, &bN, &bS);
     bool bAgrees = (slotOfCellInB == bN) || (slotOfCellInB == bS);
     return bAgrees ? roleFromA : LOCAL_CHUNK_EDGE_CLEAN;
 }
 
-LocalChunkCrossing local_chunk_cross_border(const Planet *planet, int cell, int res,
-                                             int col, int row, int neighborSlot) {
+LocalChunkCrossing local_chunk_cross_border(const Planet *planet, int32_t cell, int32_t res,
+                                             int32_t col, int32_t row, int32_t neighborSlot) {
     LocalChunkCrossing out = { 0, 0, 0, false };
-    int deg = planet->degree[cell];
+    int32_t deg = planet->degree[cell];
     if (neighborSlot < 0 || neighborSlot >= deg) return out;
-    int nb = planet->neighbors[cell][neighborSlot];
+    int32_t nb = planet->neighbors[cell][neighborSlot];
     if (nb < 0 || col < 0 || col >= res || row < 0 || row >= res) return out;
 
     out.cell = nb;
@@ -132,7 +133,7 @@ LocalChunkCrossing local_chunk_cross_border(const Planet *planet, int cell, int 
 
     float phaseSelf = (cell < nb) ? 0.0f : 0.5f;
     float phaseNb   = (cell < nb) ? 0.5f : 0.0f;
-    int destCol = (int)floorf((float)col + (phaseSelf - phaseNb));
+    int32_t destCol = (int32_t)floorf((float)col + (phaseSelf - phaseNb));
     if (destCol < 0) destCol = 0;
     if (destCol >= res) destCol = res - 1;
     out.col = destCol;
@@ -140,24 +141,24 @@ LocalChunkCrossing local_chunk_cross_border(const Planet *planet, int cell, int 
     return out;
 }
 
-int local_chunk_debug_check_reciprocity(const Planet *planet, int *out_mismatches) {
-    int total = 0, mismatches = 0;
-    for (int cell = 0; cell < planet->cell_count; cell++) {
-        int deg = planet->degree[cell];
-        for (int slot = 0; slot < deg; slot++) {
-            int nb = planet->neighbors[cell][slot];
+int32_t local_chunk_debug_check_reciprocity(const Planet *planet, int32_t *out_mismatches) {
+    int32_t total = 0, mismatches = 0;
+    for (int32_t cell = 0; cell < planet->cell_count; cell++) {
+        int32_t deg = planet->degree[cell];
+        for (int32_t slot = 0; slot < deg; slot++) {
+            int32_t nb = planet->neighbors[cell][slot];
             if (nb <= cell) continue;
 
-            int aN, aS;
+            int32_t aN, aS;
             pick_north_south_slot(planet, cell, &aN, &aS);
             bool aCandidate = (slot == aN || slot == aS);
 
-            int degB = planet->degree[nb];
-            int slotInNb = -1;
-            for (int k = 0; k < degB; k++) {
+            int32_t degB = planet->degree[nb];
+            int32_t slotInNb = -1;
+            for (int32_t k = 0; k < degB; k++) {
                 if (planet->neighbors[nb][k] == cell) { slotInNb = k; break; }
             }
-            int bN, bS;
+            int32_t bN, bS;
             pick_north_south_slot(planet, nb, &bN, &bS);
             bool bCandidate = slotInNb >= 0 && (slotInNb == bN || slotInNb == bS);
 
@@ -173,9 +174,9 @@ int local_chunk_debug_check_reciprocity(const Planet *planet, int *out_mismatche
 
 LocalChunkFields *local_chunk_create(const Planet *planet,
                                       const WorldFields *fields,
-                                      unsigned int world_seed,
-                                      int generator_index,
-                                      int cell, int res) {
+                                      uint32_t world_seed,
+                                      int32_t generator_index,
+                                      int32_t cell, int32_t res) {
     if (!planet || !fields || cell < 0 || cell >= fields->count || res < 2) return NULL;
 
     LocalChunkFields *f = (LocalChunkFields *)calloc(1, sizeof(LocalChunkFields));
@@ -194,11 +195,11 @@ LocalChunkFields *local_chunk_create(const Planet *planet,
     f->self_humidity    = fields->humidity[cell];
     f->self_terrain     = fields->terrain[cell];
 
-    int deg = planet->degree[cell];
-    f->degree = deg;
-    for (int k = 0; k < LOCAL_CHUNK_MAX_NEIGHBORS; k++) f->neighbors[k].cell = -1;
-    for (int k = 0; k < deg; k++) {
-        int nb = planet->neighbors[cell][k];
+    int32_t deg = planet->degree[cell];
+    f->degree = (uint8_t)deg;
+    for (int32_t k = 0; k < LOCAL_CHUNK_MAX_NEIGHBORS; k++) f->neighbors[k].cell = -1;
+    for (int32_t k = 0; k < deg; k++) {
+        int32_t nb = planet->neighbors[cell][k];
         LocalChunkNeighbor *n = &f->neighbors[k];
         n->cell            = nb;
         n->elevation       = fields->elevation[nb];
@@ -211,7 +212,7 @@ LocalChunkFields *local_chunk_create(const Planet *planet,
 
     size_t cells = (size_t)res * (size_t)res;
     f->elevation  = (float *)calloc(cells, sizeof(float));
-    f->river_mask = (unsigned char *)calloc(cells, sizeof(unsigned char));
+    f->river_mask = (uint8_t *)calloc(cells, sizeof(uint8_t));
     if (!f->elevation || !f->river_mask) { local_chunk_destroy(f); return NULL; }
 
     return f;
@@ -230,8 +231,8 @@ static void stage_elevation(LocalChunkFields *f) {
     tangent_frame(center, &tan, &bit);
 
     float maxDist = 0.0f;
-    for (int k = 0; k < f->degree; k++) {
-        int nb = f->neighbors[k].cell;
+    for (int32_t k = 0; k < f->degree; k++) {
+        int32_t nb = f->neighbors[k].cell;
         if (nb < 0) continue;
         PlanetV3 mid = edge_midpoint(f->planet, f->cell, nb);
         float lx, ly;
@@ -243,14 +244,14 @@ static void stage_elevation(LocalChunkFields *f) {
     float extent = maxDist * 1.15f;
     f->extent = extent;
 
-    const unsigned int detailSeed = f->world_seed + 9001u;
-    const float kDetailFreq = 55.0f, kDetailAmp = 0.20f;
-    const int   kDetailOctaves = 4;
+    const uint32_t detailSeed = f->world_seed + 9001u;
+    const float    kDetailFreq = 55.0f, kDetailAmp = 0.20f;
+    const int32_t  kDetailOctaves = 4;
 
     const WorldGenerator *gen = world_gen_get(f->generator_index);
-    int res = f->res;
-    for (int gy = 0; gy < res; gy++) {
-        for (int gx = 0; gx < res; gx++) {
+    int32_t res = f->res;
+    for (int32_t gy = 0; gy < res; gy++) {
+        for (int32_t gx = 0; gx < res; gx++) {
             float x = ((gx + 0.5f) / res * 2.0f - 1.0f) * extent;
             float y = ((gy + 0.5f) / res * 2.0f - 1.0f) * extent;
             PlanetV3 worldPt = v3norm(v3add(v3add(center, v3scale(tan, x)), v3scale(bit, y)));
@@ -262,8 +263,8 @@ static void stage_elevation(LocalChunkFields *f) {
 }
 
 static void rasterize_river_path(LocalChunkFields *f, float ax, float ay, float bx, float by,
-                                  float extent, unsigned int pathSeed) {
-    int res = f->res;
+                                  float extent, uint32_t pathSeed) {
+    int32_t res = f->res;
     float dx = bx - ax, dy = by - ay;
     float len = sqrtf(dx * dx + dy * dy);
     float amp  = extent * 0.08f * (0.6f + world_noise_hashf(0, 0, 0, pathSeed));
@@ -272,8 +273,8 @@ static void rasterize_river_path(LocalChunkFields *f, float ax, float ay, float 
     float px = (len > 1e-6f) ? -dy / len : 0.0f;
     float py = (len > 1e-6f) ?  dx / len : 0.0f;
 
-    int steps = res * 2;
-    for (int i = 0; i <= steps; i++) {
+    int32_t steps = res * 2;
+    for (int32_t i = 0; i <= steps; i++) {
         float t = (float)i / (float)steps;
         float x = ax + dx * t, y = ay + dy * t;
         float envelope = sinf((float)M_PI * t);
@@ -281,11 +282,11 @@ static void rasterize_river_path(LocalChunkFields *f, float ax, float ay, float 
         float wiggle = amp * envelope * meander;
         x += px * wiggle; y += py * wiggle;
 
-        int gx = (int)((x / extent * 0.5f + 0.5f) * res);
-        int gy = (int)((y / extent * 0.5f + 0.5f) * res);
-        for (int oy = -1; oy <= 1; oy++) {
-            for (int ox = -1; ox <= 1; ox++) {
-                int cx = gx + ox, cy = gy + oy;
+        int32_t gx = (int32_t)((x / extent * 0.5f + 0.5f) * res);
+        int32_t gy = (int32_t)((y / extent * 0.5f + 0.5f) * res);
+        for (int32_t oy = -1; oy <= 1; oy++) {
+            for (int32_t ox = -1; ox <= 1; ox++) {
+                int32_t cx = gx + ox, cy = gy + oy;
                 if (cx < 0 || cx >= res || cy < 0 || cy >= res) continue;
                 f->river_mask[cy * res + cx] = 1;
             }
@@ -302,15 +303,15 @@ static void stage_rivers(LocalChunkFields *f) {
     if (extent < 1e-6f) return;
 
     float lxs[LOCAL_CHUNK_MAX_NEIGHBORS], lys[LOCAL_CHUNK_MAX_NEIGHBORS];
-    for (int k = 0; k < f->degree; k++) {
-        int nb = f->neighbors[k].cell;
+    for (int32_t k = 0; k < f->degree; k++) {
+        int32_t nb = f->neighbors[k].cell;
         if (nb < 0) continue;
         PlanetV3 mid = edge_midpoint(f->planet, f->cell, nb);
         project_local(center, tan, bit, mid, &lxs[k], &lys[k]);
     }
 
-    int outflowK = -1;
-    for (int k = 0; k < f->degree; k++) {
+    int32_t outflowK = -1;
+    for (int32_t k = 0; k < f->degree; k++) {
         if (f->neighbors[k].cell >= 0 && f->neighbors[k].i_flow_into_it) { outflowK = k; break; }
     }
     bool haveOutflow = outflowK >= 0 && (f->world.river[f->cell] > 0 || f->world.river[f->neighbors[outflowK].cell] > 0);
@@ -318,12 +319,12 @@ static void stage_rivers(LocalChunkFields *f) {
     if (haveOutflow) { termX = lxs[outflowK]; termY = lys[outflowK]; }
 
     bool anyInflow = false;
-    for (int k = 0; k < f->degree; k++) {
+    for (int32_t k = 0; k < f->degree; k++) {
         LocalChunkNeighbor *n = &f->neighbors[k];
         if (n->cell < 0 || !n->flows_into_me) continue;
         if (f->world.river[f->cell] == 0 && f->world.river[n->cell] == 0) continue;
 
-        unsigned int pathSeed = world_noise_hash3(f->cell, n->cell,
+        uint32_t pathSeed = world_noise_hash3(f->cell, n->cell,
                                                     haveOutflow ? f->neighbors[outflowK].cell : -1,
                                                     f->world_seed);
         rasterize_river_path(f, lxs[k], lys[k], termX, termY, extent, pathSeed);
@@ -331,7 +332,7 @@ static void stage_rivers(LocalChunkFields *f) {
     }
 
     if (haveOutflow && !anyInflow) {
-        unsigned int pathSeed = world_noise_hash3(f->cell, f->neighbors[outflowK].cell, -2, f->world_seed);
+        uint32_t pathSeed = world_noise_hash3(f->cell, f->neighbors[outflowK].cell, -2, f->world_seed);
         rasterize_river_path(f, 0.0f, 0.0f, termX, termY, extent, pathSeed);
     }
 }
@@ -345,26 +346,26 @@ static const LocalChunkStage STAGES[] = {
     { "Rivers",         stage_rivers },
     { "Biome context",  stage_biome_context },
 };
-static const int STAGE_COUNT = (int)(sizeof(STAGES) / sizeof(STAGES[0]));
+static const int32_t STAGE_COUNT = (int32_t)(sizeof(STAGES) / sizeof(STAGES[0]));
 
-int local_chunk_stage_count(void) { return STAGE_COUNT; }
+int32_t local_chunk_stage_count(void) { return STAGE_COUNT; }
 
-const LocalChunkStage *local_chunk_stage_get(int index) {
+const LocalChunkStage *local_chunk_stage_get(int32_t index) {
     if (index < 0 || index >= STAGE_COUNT) return NULL;
     return &STAGES[index];
 }
 
 void local_chunk_run(LocalChunkFields *f) {
     if (!f) return;
-    for (int i = 0; i < STAGE_COUNT; i++) STAGES[i].run(f);
+    for (int32_t i = 0; i < STAGE_COUNT; i++) STAGES[i].run(f);
 }
 
 static Color lerp_color(Color a, Color b, float t) {
     if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
     return (Color){
-        (unsigned char)(a.r + (b.r - a.r) * t),
-        (unsigned char)(a.g + (b.g - a.g) * t),
-        (unsigned char)(a.b + (b.b - a.b) * t),
+        (uint8_t)(a.r + (b.r - a.r) * t),
+        (uint8_t)(a.g + (b.g - a.g) * t),
+        (uint8_t)(a.b + (b.b - a.b) * t),
         255,
     };
 }
@@ -380,21 +381,21 @@ static Color elevation_color(float e, float sea) {
 
 static void draw_tile_cells(const LocalChunkFields *f, float x, float y, float fw, float fh,
                              float *out_lo, float *out_hi) {
-    int res = f->res;
+    int32_t res = f->res;
     float cw = fw / (float)res, ch = fh / (float)res;
     float sea = f->world.params->sea_level;
 
     float lo = f->elevation[0], hi = f->elevation[0];
-    BeginScissorMode((int)x, (int)y, (int)ceilf(fw), (int)ceilf(fh));
-    for (int gy = 0; gy < res; gy++) {
-        for (int gx = 0; gx < res; gx++) {
-            int i = gy * res + gx;
+    BeginScissorMode((int32_t)x, (int32_t)y, (int32_t)ceilf(fw), (int32_t)ceilf(fh));
+    for (int32_t gy = 0; gy < res; gy++) {
+        for (int32_t gx = 0; gx < res; gx++) {
+            int32_t i = gy * res + gx;
             if (f->elevation[i] < lo) lo = f->elevation[i];
             if (f->elevation[i] > hi) hi = f->elevation[i];
             Color c = f->river_mask[i] ? (Color){ 60, 150, 230, 255 }
                                         : elevation_color(f->elevation[i], sea);
-            DrawRectangle((int)(x + gx * cw), (int)(y + gy * ch),
-                          (int)ceilf(cw), (int)ceilf(ch), c);
+            DrawRectangle((int32_t)(x + gx * cw), (int32_t)(y + gy * ch),
+                          (int32_t)ceilf(cw), (int32_t)ceilf(ch), c);
         }
     }
     EndScissorMode();
@@ -403,21 +404,21 @@ static void draw_tile_cells(const LocalChunkFields *f, float x, float y, float f
 }
 
 void local_chunk_draw_in_rect(const LocalChunkFields *f, float x, float y, float fw, float fh) {
-    DrawRectangle((int)x, (int)y, (int)fw, (int)fh, (Color){ 10, 10, 16, 255 });
+    DrawRectangle((int32_t)x, (int32_t)y, (int32_t)fw, (int32_t)fh, (Color){ 10, 10, 16, 255 });
     if (!f || fw < 1.0f || fh < 1.0f) return;
 
     float lo, hi;
     draw_tile_cells(f, x, y, fw, fh, &lo, &hi);
 
     DrawText(TextFormat("elev %+.2f .. %+.2f  (sea %+.2f)", lo, hi, f->world.params->sea_level),
-              (int)x + 4, (int)(y + fh) - 18, 12, (Color){ 230, 230, 235, 255 });
+              (int32_t)x + 4, (int32_t)(y + fh) - 18, 12, (Color){ 230, 230, 235, 255 });
 }
 
 LocalChunkGroup local_chunk_create_group(const Planet *planet,
                                           const WorldFields *fields,
-                                          unsigned int world_seed,
-                                          int generator_index,
-                                          int cell, int res) {
+                                          uint32_t world_seed,
+                                          int32_t generator_index,
+                                          int32_t cell, int32_t res) {
     LocalChunkGroup g;
     memset(&g, 0, sizeof(g));
 
@@ -426,8 +427,8 @@ LocalChunkGroup local_chunk_create_group(const Planet *planet,
     local_chunk_run(center);
     g.tiles[g.count++] = center;
 
-    for (int k = 0; k < center->degree; k++) {
-        int nb = center->neighbors[k].cell;
+    for (int32_t k = 0; k < center->degree; k++) {
+        int32_t nb = center->neighbors[k].cell;
         if (nb < 0) continue;
         LocalChunkFields *t = local_chunk_create(planet, fields, world_seed, generator_index, nb, res);
         if (!t) continue;
@@ -439,15 +440,15 @@ LocalChunkGroup local_chunk_create_group(const Planet *planet,
 
 void local_chunk_destroy_group(LocalChunkGroup *g) {
     if (!g) return;
-    for (int i = 0; i < g->count; i++) local_chunk_destroy(g->tiles[i]);
+    for (int32_t i = 0; i < g->count; i++) local_chunk_destroy(g->tiles[i]);
     memset(g, 0, sizeof(*g));
 }
 
 typedef struct { float x, y; } LC2;
 
-static bool point_in_poly(const LC2 *poly, int n, float px, float py) {
+static bool point_in_poly(const LC2 *poly, int32_t n, float px, float py) {
     bool inside = false;
-    for (int i = 0, j = n - 1; i < n; j = i++) {
+    for (int32_t i = 0, j = n - 1; i < n; j = i++) {
         float xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
         if (((yi > py) != (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi))
             inside = !inside;
@@ -458,7 +459,7 @@ static bool point_in_poly(const LC2 *poly, int n, float px, float py) {
 #define LOCAL_CHUNK_GROUP_SUPER_RES 140
 
 void local_chunk_draw_group_in_rect(const LocalChunkGroup *g, float x, float y, float fw, float fh) {
-    DrawRectangle((int)x, (int)y, (int)fw, (int)fh, (Color){ 10, 10, 16, 255 });
+    DrawRectangle((int32_t)x, (int32_t)y, (int32_t)fw, (int32_t)fh, (Color){ 10, 10, 16, 255 });
     if (!g || g->count == 0 || !g->tiles[0] || fw < 1.0f || fh < 1.0f) return;
 
     const LocalChunkFields *center = g->tiles[0];
@@ -468,16 +469,16 @@ void local_chunk_draw_group_in_rect(const LocalChunkGroup *g, float x, float y, 
     tangent_frame(centerPos, &sTan, &sBit);
 
     LC2 poly[1 + LOCAL_CHUNK_MAX_NEIGHBORS][LOCAL_CHUNK_MAX_NEIGHBORS];
-    int polyN[1 + LOCAL_CHUNK_MAX_NEIGHBORS];
+    int32_t polyN[1 + LOCAL_CHUNK_MAX_NEIGHBORS];
     LC2 center2[1 + LOCAL_CHUNK_MAX_NEIGHBORS];
     float maxReach = 0.0f;
 
-    for (int i = 0; i < g->count; i++) {
+    for (int32_t i = 0; i < g->count; i++) {
         const LocalChunkFields *t = g->tiles[i];
-        int deg = planet->degree[t->cell];
+        int32_t deg = planet->degree[t->cell];
         polyN[i] = deg;
         project_local(centerPos, sTan, sBit, planet->pos[t->cell], &center2[i].x, &center2[i].y);
-        for (int k = 0; k < deg; k++) {
+        for (int32_t k = 0; k < deg; k++) {
             PlanetV3 corner = planet->corner_pos[planet->cell_corners[t->cell][k]];
             project_local(centerPos, sTan, sBit, corner, &poly[i][k].x, &poly[i][k].y);
             float d = sqrtf(poly[i][k].x * poly[i][k].x + poly[i][k].y * poly[i][k].y);
@@ -487,22 +488,22 @@ void local_chunk_draw_group_in_rect(const LocalChunkGroup *g, float x, float y, 
     if (maxReach < 1e-6f) maxReach = 1.0f;
     float span = maxReach * 2.0f * 1.05f;
 
-    int super = LOCAL_CHUNK_GROUP_SUPER_RES;
+    int32_t super = LOCAL_CHUNK_GROUP_SUPER_RES;
     float cw = fw / (float)super, ch = fh / (float)super;
 
-    for (int gy = 0; gy < super; gy++) {
-        for (int gx = 0; gx < super; gx++) {
+    for (int32_t gy = 0; gy < super; gy++) {
+        for (int32_t gx = 0; gx < super; gx++) {
             float sx = ((gx + 0.5f) / super * 2.0f - 1.0f) * (span * 0.5f);
             float sy = ((gy + 0.5f) / super * 2.0f - 1.0f) * (span * 0.5f);
             float shared_y = -sy;
 
-            int hit = -1;
-            for (int i = 0; i < g->count; i++) {
+            int32_t hit = -1;
+            for (int32_t i = 0; i < g->count; i++) {
                 if (point_in_poly(poly[i], polyN[i], sx, shared_y)) { hit = i; break; }
             }
             if (hit < 0) {
                 float best = 1e30f;
-                for (int i = 0; i < g->count; i++) {
+                for (int32_t i = 0; i < g->count; i++) {
                     float dx = sx - center2[i].x, dy = shared_y - center2[i].y;
                     float d2 = dx * dx + dy * dy;
                     if (d2 < best) { best = d2; hit = i; }
@@ -517,34 +518,34 @@ void local_chunk_draw_group_in_rect(const LocalChunkGroup *g, float x, float y, 
             float lx, ly;
             project_local(tCenter, tTan, tBit, worldPt, &lx, &ly);
 
-            int res = t->res;
-            int ti = (int)((lx / t->extent * 0.5f + 0.5f) * res);
-            int tj = (int)((ly / t->extent * 0.5f + 0.5f) * res);
+            int32_t res = t->res;
+            int32_t ti = (int32_t)((lx / t->extent * 0.5f + 0.5f) * res);
+            int32_t tj = (int32_t)((ly / t->extent * 0.5f + 0.5f) * res);
             if (ti < 0) ti = 0; if (ti >= res) ti = res - 1;
             if (tj < 0) tj = 0; if (tj >= res) tj = res - 1;
-            int idx = tj * res + ti;
+            int32_t idx = tj * res + ti;
 
             Color c = t->river_mask[idx] ? (Color){ 60, 150, 230, 255 }
                                           : elevation_color(t->elevation[idx], t->world.params->sea_level);
             if (hit == 0) c = lerp_color(c, (Color){ 255, 245, 200, 255 }, 0.12f);
-            DrawRectangle((int)(x + gx * cw), (int)(y + gy * ch), (int)ceilf(cw), (int)ceilf(ch), c);
+            DrawRectangle((int32_t)(x + gx * cw), (int32_t)(y + gy * ch), (int32_t)ceilf(cw), (int32_t)ceilf(ch), c);
         }
     }
 
-    for (int i = 0; i < g->count; i++) {
+    for (int32_t i = 0; i < g->count; i++) {
         float px = x + fw * 0.5f + center2[i].x / (span * 0.5f) * (fw * 0.5f);
         float py = y + fh * 0.5f - center2[i].y / (span * 0.5f) * (fh * 0.5f);
-        DrawText(TextFormat("#%d", g->tiles[i]->cell), (int)px - 14, (int)py - 6, 12,
+        DrawText(TextFormat("#%d", g->tiles[i]->cell), (int32_t)px - 14, (int32_t)py - 6, 12,
                   (Color){ 255, 255, 255, 220 });
     }
 }
 
 void local_chunk_draw_square_in_rect(const LocalChunkFields *f, float x, float y, float fw, float fh) {
-    DrawRectangle((int)x, (int)y, (int)fw, (int)fh, (Color){ 10, 10, 16, 255 });
+    DrawRectangle((int32_t)x, (int32_t)y, (int32_t)fw, (int32_t)fh, (Color){ 10, 10, 16, 255 });
     if (!f || fw < 1.0f || fh < 1.0f) return;
 
     const Planet *planet = f->planet;
-    int cell = f->cell;
+    int32_t cell = f->cell;
     PlanetV3 center = planet->pos[cell];
     PlanetV3 east, north;
     local_chunk_north_frame(center, &east, &north);
@@ -552,9 +553,9 @@ void local_chunk_draw_square_in_rect(const LocalChunkFields *f, float x, float y
     PlanetV3 gridTan, gridBit;
     tangent_frame(center, &gridTan, &gridBit);
     float extent = f->extent;
-    int res = f->res;
+    int32_t res = f->res;
 
-    int northSlot, southSlot;
+    int32_t northSlot, southSlot;
     pick_north_south_slot(planet, cell, &northSlot, &southSlot);
     LocalChunkEdgeRole northRole = (northSlot >= 0) ? local_chunk_edge_role(planet, cell, northSlot)
                                                      : LOCAL_CHUNK_EDGE_CLEAN;
@@ -566,8 +567,8 @@ void local_chunk_draw_square_in_rect(const LocalChunkFields *f, float x, float y
     float cw = fw / (float)res, ch = gridH / (float)res;
     const float edgeBand = 0.15f;
 
-    for (int gy = 0; gy < res; gy++) {
-        for (int gx = 0; gx < res; gx++) {
+    for (int32_t gy = 0; gy < res; gy++) {
+        for (int32_t gx = 0; gx < res; gx++) {
             float u = (gx + 0.5f) / res * 2.0f - 1.0f;
             float v = (gy + 0.5f) / res * 2.0f - 1.0f;
             float dx = u * extent;
@@ -576,11 +577,11 @@ void local_chunk_draw_square_in_rect(const LocalChunkFields *f, float x, float y
             PlanetV3 worldPt = v3norm(v3add(v3add(center, v3scale(east, dx)), v3scale(north, dyNorth)));
             float lx, ly;
             project_local(center, gridTan, gridBit, worldPt, &lx, &ly);
-            int gi = (int)((lx / extent * 0.5f + 0.5f) * res);
-            int gj = (int)((ly / extent * 0.5f + 0.5f) * res);
+            int32_t gi = (int32_t)((lx / extent * 0.5f + 0.5f) * res);
+            int32_t gj = (int32_t)((ly / extent * 0.5f + 0.5f) * res);
             if (gi < 0) gi = 0; if (gi >= res) gi = res - 1;
             if (gj < 0) gj = 0; if (gj >= res) gj = res - 1;
-            int idx = gj * res + gi;
+            int32_t idx = gj * res + gi;
 
             Color c = f->river_mask[idx] ? (Color){ 60, 150, 230, 255 }
                                           : elevation_color(f->elevation[idx], f->world.params->sea_level);
@@ -590,43 +591,43 @@ void local_chunk_draw_square_in_rect(const LocalChunkFields *f, float x, float y
             if (v > 1.0f - edgeBand && southRole == LOCAL_CHUNK_EDGE_SOUTH)
                 c = lerp_color(c, (Color){ 255, 130, 80, 255 }, 0.25f);
 
-            DrawRectangle((int)(x + gx * cw), (int)(y + gy * ch), (int)ceilf(cw), (int)ceilf(ch), c);
+            DrawRectangle((int32_t)(x + gx * cw), (int32_t)(y + gy * ch), (int32_t)ceilf(cw), (int32_t)ceilf(ch), c);
         }
     }
 
     Color gridLine = (Color){ 0, 0, 0, 60 };
-    for (int i = 0; i <= res; i++) {
-        DrawLine((int)(x + i * cw), (int)y, (int)(x + i * cw), (int)(y + gridH), gridLine);
-        DrawLine((int)x, (int)(y + i * ch), (int)(x + fw), (int)(y + i * ch), gridLine);
+    for (int32_t i = 0; i <= res; i++) {
+        DrawLine((int32_t)(x + i * cw), (int32_t)y, (int32_t)(x + i * cw), (int32_t)(y + gridH), gridLine);
+        DrawLine((int32_t)x, (int32_t)(y + i * ch), (int32_t)(x + fw), (int32_t)(y + i * ch), gridLine);
     }
 
-    int labelY = (int)(y + gridH) + 2;
+    int32_t labelY = (int32_t)(y + gridH) + 2;
     if (northRole == LOCAL_CHUNK_EDGE_NORTH) {
-        int sampleCol = res / 2;
+        int32_t sampleCol = res / 2;
         LocalChunkCrossing cr = local_chunk_cross_border(planet, cell, res, sampleCol, 0, northSlot);
-        DrawRectangle((int)(x + sampleCol * cw), (int)y, (int)ceilf(cw), (int)ceilf(ch),
+        DrawRectangle((int32_t)(x + sampleCol * cw), (int32_t)y, (int32_t)ceilf(cw), (int32_t)ceilf(ch),
                       (Color){ 255, 220, 60, 255 });
         DrawText(TextFormat("N col %d -> #%d col %d", sampleCol, cr.cell, cr.col),
-                  (int)x + 2, labelY, 11, (Color){ 255, 220, 60, 255 });
+                  (int32_t)x + 2, labelY, 11, (Color){ 255, 220, 60, 255 });
         labelY += 14;
     }
     if (southRole == LOCAL_CHUNK_EDGE_SOUTH) {
-        int sampleCol = res / 2;
+        int32_t sampleCol = res / 2;
         LocalChunkCrossing cr = local_chunk_cross_border(planet, cell, res, sampleCol, res - 1, southSlot);
-        DrawRectangle((int)(x + sampleCol * cw), (int)(y + gridH - ch), (int)ceilf(cw), (int)ceilf(ch),
+        DrawRectangle((int32_t)(x + sampleCol * cw), (int32_t)(y + gridH - ch), (int32_t)ceilf(cw), (int32_t)ceilf(ch),
                       (Color){ 255, 140, 60, 255 });
         DrawText(TextFormat("S col %d -> #%d col %d", sampleCol, cr.cell, cr.col),
-                  (int)x + 2, labelY, 11, (Color){ 255, 140, 60, 255 });
+                  (int32_t)x + 2, labelY, 11, (Color){ 255, 140, 60, 255 });
     }
 }
 
 void local_chunk_draw_connected_in_rect(const LocalChunkGroup *g, float x, float y, float fw, float fh) {
-    DrawRectangle((int)x, (int)y, (int)fw, (int)fh, (Color){ 10, 10, 16, 255 });
+    DrawRectangle((int32_t)x, (int32_t)y, (int32_t)fw, (int32_t)fh, (Color){ 10, 10, 16, 255 });
     if (!g || g->count == 0 || !g->tiles[0] || fw < 1.0f || fh < 1.0f) return;
 
     const LocalChunkFields *center = g->tiles[0];
     const Planet *planet = center->planet;
-    int centerCell = center->cell;
+    int32_t centerCell = center->cell;
     PlanetV3 centerPos = planet->pos[centerCell];
     PlanetV3 east, north;
     local_chunk_north_frame(centerPos, &east, &north);
@@ -637,17 +638,17 @@ void local_chunk_draw_connected_in_rect(const LocalChunkGroup *g, float x, float
     float squareSize = fminf(fw, fh) / 3.0f;
     float cx = x + fw * 0.5f, cy = y + fh * 0.5f;
 
-    #define PXROUND(v) ((int)((v) + 0.5f))
+    #define PXROUND(v) ((int32_t)((v) + 0.5f))
 
-    int cLeft = PXROUND(cx - squareSize * 0.5f), cTop = PXROUND(cy - squareSize * 0.5f);
-    int cRight = PXROUND(cx + squareSize * 0.5f), cBottom = PXROUND(cy + squareSize * 0.5f);
+    int32_t cLeft = PXROUND(cx - squareSize * 0.5f), cTop = PXROUND(cy - squareSize * 0.5f);
+    int32_t cRight = PXROUND(cx + squareSize * 0.5f), cBottom = PXROUND(cy + squareSize * 0.5f);
     draw_tile_cells(center, (float)cLeft, (float)cTop, (float)(cRight - cLeft), (float)(cBottom - cTop), NULL, NULL);
 
-    for (int i = 1; i < g->count; i++) {
+    for (int32_t i = 1; i < g->count; i++) {
         const LocalChunkFields *t = g->tiles[i];
 
-        int slot = -1;
-        for (int k = 0; k < center->degree; k++) {
+        int32_t slot = -1;
+        for (int32_t k = 0; k < center->degree; k++) {
             if (planet->neighbors[centerCell][k] == t->cell) { slot = k; break; }
         }
         if (slot < 0) continue;
@@ -657,14 +658,14 @@ void local_chunk_draw_connected_in_rect(const LocalChunkGroup *g, float x, float
         project_local(centerPos, east, north, mid, &lx, &ly);
         float angle = atan2f(lx, ly);
         if (angle < 0.0f) angle += 2.0f * (float)M_PI;
-        int dir = ((int)floorf(angle / ((float)M_PI / 3.0f) + 0.5f)) % 6;
+        int32_t dir = ((int32_t)floorf(angle / ((float)M_PI / 3.0f) + 0.5f)) % 6;
 
         LocalChunkEdgeRole role = local_chunk_edge_role(planet, centerCell, slot);
         bool staggered = (role == LOCAL_CHUNK_EDGE_NORTH || role == LOCAL_CHUNK_EDGE_SOUTH);
 
         float tcx = cx + offX[dir] * squareSize, tcy = cy + offY[dir] * squareSize;
-        int left = PXROUND(tcx - squareSize * 0.5f), top = PXROUND(tcy - squareSize * 0.5f);
-        int right = PXROUND(tcx + squareSize * 0.5f), bottom = PXROUND(tcy + squareSize * 0.5f);
+        int32_t left = PXROUND(tcx - squareSize * 0.5f), top = PXROUND(tcy - squareSize * 0.5f);
+        int32_t right = PXROUND(tcx + squareSize * 0.5f), bottom = PXROUND(tcy + squareSize * 0.5f);
         draw_tile_cells(t, (float)left, (float)top, (float)(right - left), (float)(bottom - top), NULL, NULL);
 
         Color outline = staggered ? (Color){ 255, 200, 80, 255 } : (Color){ 70, 75, 90, 220 };

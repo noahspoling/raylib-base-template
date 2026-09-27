@@ -1,6 +1,7 @@
 #ifndef COMPONENTS_SPRITE_H
 #define COMPONENTS_SPRITE_H
 
+#include <stdint.h>
 #include "raylib.h"
 
 typedef struct Transform2D {
@@ -10,7 +11,7 @@ typedef struct Transform2D {
 } Transform2D;
 
 typedef struct SpriteComp {
-    int texture;
+    int32_t texture;
     Rectangle src;
     float w, h;
     Color tint;

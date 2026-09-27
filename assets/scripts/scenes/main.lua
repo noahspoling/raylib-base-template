@@ -83,10 +83,10 @@ local function settings_panel()
         widgets.OptionRow {
             id       = "opt_volume",
             label    = "Volume",
-            value    = settings_volume .. "%",
+            value    = 0 .. "%",
             on_click = function()
-                settings_volume = (settings_volume + 10) % 110
-                gramarye.log("volume: " .. settings_volume)
+                settings_volume = (0  + 10) % 110
+                gramarye.log("volume: " .. 0)
             end,
         },
         ui.Separator {},
@@ -164,8 +164,8 @@ local function widgets_panel()
     }
 end
 
-local panels     = { overview_panel, inventory_panel, settings_panel, widgets_panel }
-local tabs       = { "Overview", "Inventory", "Settings", "Widgets" }
+local panels     = { overview_panel, settings_panel, widgets_panel }
+local tabs       = { "Overview", "Settings", "Widgets" }
 local tab_clicks = {}
 for i = 1, #tabs do
     tab_clicks[i] = function() tab = i end

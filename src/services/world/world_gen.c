@@ -1,20 +1,21 @@
 #include "services/world/world_gen.h"
+#include <stdint.h>
 #include "services/world_noise.h"
 
 #include <math.h>
 
 static float clamp01(float v) { return world_noise_clamp01(v); }
-static float fbm(PlanetV3 p, float freq, int octaves, unsigned int seed) {
+static float fbm(PlanetV3 p, float freq, int32_t octaves, uint32_t seed) {
     return world_noise_fbm(p, freq, octaves, seed);
 }
 
-static float ridged(PlanetV3 p, float freq, int octaves, unsigned int seed) {
+static float ridged(PlanetV3 p, float freq, int32_t octaves, uint32_t seed) {
     float n = fbm(p, freq, octaves, seed);
     float r = 1.0f - fabsf(n);
     return r * r;
 }
 
-static PlanetV3 warp(PlanetV3 p, float freq, float amt, unsigned int seed) {
+static PlanetV3 warp(PlanetV3 p, float freq, float amt, uint32_t seed) {
     float wx = fbm(p, freq, 3, seed + 11u);
     float wy = fbm(p, freq, 3, seed + 22u);
     float wz = fbm(p, freq, 3, seed + 33u);
@@ -22,7 +23,7 @@ static PlanetV3 warp(PlanetV3 p, float freq, float amt, unsigned int seed) {
     return q;
 }
 
-static float warped_latitude(PlanetV3 pos, unsigned int seed) {
+static float warped_latitude(PlanetV3 pos, uint32_t seed) {
     float lat = fabsf(pos.y);
     lat += 0.05f * fbm(pos, 2.2f, 3, seed + 555u);
     return clamp01(lat);
@@ -41,7 +42,7 @@ static float climate_humidity(float lat) {
     return clamp01(0.18f + 0.78f * eq + 0.45f * mid);
 }
 
-WorldGenParams world_gen_default_params(unsigned int seed) {
+WorldGenParams world_gen_default_params(uint32_t seed) {
     WorldGenParams p = {
         .seed             = seed,
         .sea_level        = 0.0f,
@@ -58,7 +59,7 @@ WorldGenParams world_gen_default_params(unsigned int seed) {
 }
 
 static WorldGenSample gen_continents(const WorldGenerator *self,
-                                     const WorldGenParams *pm, PlanetV3 pos, int cell) {
+                                     const WorldGenParams *pm, PlanetV3 pos, int32_t cell) {
     (void)self; (void)cell;
     PlanetV3 wp = warp(pos, pm->noise_scale * 0.6f, 0.35f, pm->seed);
     float e = fbm(wp, pm->noise_scale, 6, pm->seed);
@@ -75,7 +76,7 @@ static WorldGenSample gen_continents(const WorldGenerator *self,
 }
 
 static WorldGenSample gen_islands(const WorldGenerator *self,
-                                  const WorldGenParams *pm, PlanetV3 pos, int cell) {
+                                  const WorldGenParams *pm, PlanetV3 pos, int32_t cell) {
     (void)self; (void)cell;
     float cluster = fbm(pos, pm->noise_scale * 0.55f, 3, pm->seed + 123u);
     float uplift  = clamp01((cluster - 0.05f) * 1.9f);
@@ -93,7 +94,7 @@ static WorldGenSample gen_islands(const WorldGenerator *self,
 }
 
 static WorldGenSample gen_bands(const WorldGenerator *self,
-                                const WorldGenParams *pm, PlanetV3 pos, int cell) {
+                                const WorldGenParams *pm, PlanetV3 pos, int32_t cell) {
     (void)self; (void)cell;
     float e = 0.45f * fbm(pos, pm->noise_scale * 1.8f, 4, pm->seed);
     float lat  = warped_latitude(pos, pm->seed);
@@ -108,19 +109,19 @@ static const WorldGenerator GENERATORS[] = {
     { "Islands",        gen_islands,    NULL },
     { "Latitude Bands", gen_bands,      NULL },
 };
-static const int GEN_COUNT = (int)(sizeof(GENERATORS) / sizeof(GENERATORS[0]));
+static const int32_t GEN_COUNT = (int32_t)(sizeof(GENERATORS) / sizeof(GENERATORS[0]));
 
-int world_gen_count(void) { return GEN_COUNT; }
+int32_t world_gen_count(void) { return GEN_COUNT; }
 
-const WorldGenerator *world_gen_get(int index) {
+const WorldGenerator *world_gen_get(int32_t index) {
     if (index < 0) index = 0;
     if (index >= GEN_COUNT) index = GEN_COUNT - 1;
     return &GENERATORS[index];
 }
-const char *world_gen_name(int index) { return world_gen_get(index)->name; }
+const char *world_gen_name(int32_t index) { return world_gen_get(index)->name; }
 
 typedef struct {
-    unsigned char terrain;
+    uint8_t terrain;
     float it, tt;
     float ih, th;
     float ie, te;
@@ -137,7 +138,7 @@ static const BiomeProfile BIOMES[] = {
     { TILE_TERRAIN_RAINFOREST, 0.80f, 0.20f, 0.74f, 0.24f, 0.35f, 0.70f },
     { TILE_TERRAIN_SWAMP,      0.62f, 0.18f, 0.92f, 0.13f, 0.10f, 0.22f },
 };
-static const int BIOME_COUNT = (int)(sizeof(BIOMES) / sizeof(BIOMES[0]));
+static const int32_t BIOME_COUNT = (int32_t)(sizeof(BIOMES) / sizeof(BIOMES[0]));
 
 static float gauss(float x, float ideal, float tol) {
     float d = (x - ideal) / tol;
@@ -158,9 +159,9 @@ TileTerrain tile_classify(const WorldGenParams *pm,
     if (span < 1e-3f) span = 1e-3f;
     float en = clamp01((elevation - sea) / span);
 
-    int best = 0;
+    int32_t best = 0;
     float best_score = -1.0f;
-    for (int b = 0; b < BIOME_COUNT; b++) {
+    for (int32_t b = 0; b < BIOME_COUNT; b++) {
         const BiomeProfile *bp = &BIOMES[b];
         float gt = gauss(temperature, bp->it, bp->tt);
         float gh = gauss(humidity,    bp->ih, bp->th);

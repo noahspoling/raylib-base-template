@@ -8,8 +8,15 @@ consult this file for the "why" behind the declarations.
 
 ### components/atlas.h
 
-Entirely commented-out/dead code (an unused `AtlasComp` struct and `Atlas_frame_rect`
-declaration). It contributed nothing to the build, so the file is now empty.
+`Atlas`: a list of source `Rectangle`s placed on one texture. The atlas **borrows** its texture
+through `TextureStore` — `Atlas_new(texture_id)` acquires it (returns NULL if it can't be made
+resident) and `Atlas_free` releases it, so the texture stays on the GPU exactly as long as some
+atlas (or other holder) is using it. Frames live in a libcore `Array_T`.
+
+- `Atlas_add_frame` / `Atlas_add_grid` append frames and return the first new frame index.
+- `Atlas_frame(atlas, i)` returns a zero rect when out of range; `Atlas_draw` draws one frame.
+- Animation state is meant to hold a `const Atlas *` plus frame range/timing and resolve the
+  current `src` via `Atlas_frame`, rather than owning a texture itself.
 
 ### components/chunk.h
 
@@ -93,15 +100,27 @@ Defines `Clock` (`realtimeDelta`, `turnPending`, `tickToSimulate`) and `frame_ti
 `tickToSimulate` is in units of turns — a single action may take multiple ticks, or the game may
 just use a simple turn system.
 
-### services/texture_store.h
+### services/stores/texture_store.h
 
-A small path-deduplicating texture registry so components can hold a plain `int` id instead of a
-raylib texture handle directly. Ids are `>= 1`; `0` means "no texture".
+A path-deduplicating texture registry so components can hold a plain `int32_t` id instead of a raylib
+texture handle. Ids are `>= 1` and stable for the process lifetime; `0` means "no texture". All
+bookkeeping memory goes through gramarye-libcore (`Atom` interns paths, `Table` maps path -> id,
+`Array_T` holds the slots) — no direct libc allocation.
 
-- `TextureStore_load(path)`: cached by path; returns 0 on failure.
-- `TextureStore_get(id)`: id 0 or unknown returns a zeroed `Texture2D`.
-- `TextureStore_get_ref(id)`, `TextureStore_init()`, `TextureStore_shutdown()` round out the
-  lifecycle.
+Registering and loading are separate: a registered entry is only its asset path until something
+uses it.
+
+- `TextureStore_register(path)`: records the path, returns its id. No GPU load.
+- `TextureStore_acquire(id)`: refcount++, loads on the 0 -> 1 transition. Returns false (and takes
+  no reference) if the load fails.
+- `TextureStore_release(id)`: refcount--, unloads on 1 -> 0. The path and id stay registered.
+- `TextureStore_load(path)`: register + acquire; returns 0 on failure (the old behavior).
+- `TextureStore_get(id)`: zeroed `Texture2D` when the id is unknown or not resident.
+  `TextureStore_get_ref` returns NULL in the same cases. `TextureStore_is_resident`,
+  `TextureStore_path` for inspection.
+- `TextureStore_shutdown()` unloads anything still resident regardless of refcount.
+
+Lua: `gramarye.textures.load/register/acquire/release` map 1:1 onto the above.
 
 ### services/world_noise.h
 

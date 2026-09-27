@@ -1,6 +1,7 @@
 #ifndef COMPONENTS_TILE_H
 #define COMPONENTS_TILE_H
 
+#include <stdint.h>
 #include "raylib.h"
 
 typedef enum {
@@ -22,23 +23,23 @@ typedef enum {
 } TileTerrain;
 
 typedef struct TileComp {
-    int   cell;
-    float elevation;
-    float temperature;
-    float humidity;
-    float rainfall;
-    float flow;
-    float water_level;
-    int   region;
-    int   plate;
-    unsigned char fault;
-    float stress;
-    unsigned char river;
-    unsigned char terrain;
+    int32_t cell;
+    float   elevation;
+    float   temperature;
+    float   humidity;
+    float   rainfall;
+    float   flow;
+    float   water_level;
+    int32_t region;
+    float   stress;
+    int8_t  plate;
+    uint8_t fault;
+    uint8_t river;
+    uint8_t terrain;
 } TileComp;
 
 extern const Color TILE_TERRAIN_COLORS[TILE_TERRAIN_COUNT];
 
-const char *tile_terrain_name(int terrain);
+const char *tile_terrain_name(int32_t terrain);
 
 #endif
