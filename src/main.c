@@ -21,6 +21,8 @@
 #include "services/world/world.h"
 #include "services/world/world_lua.h"
 #include "services/local_chunk/local_chunk_lua.h"
+#include "services/audio/audio_device.h"
+#include "services/audio/synth_lua.h"
 
 #include "gramarye_ui/ui.h"
 #include "gramarye_ui/ui_lua.h"
@@ -35,7 +37,8 @@ static void world_custom_draw(int32_t kind, float x, float y, float w, float h, 
         local_chunk_draw_connected_in_rect(local_chunk_lua_current(), x, y, w, h);
     } else if (kind == LOCAL_CHUNK_GROUP_DEBUG_KIND) {
         local_chunk_draw_group_in_rect(local_chunk_lua_current(), x, y, w, h);
-    }
+    } else if (kind == AUDIO_SCOPE_KIND)       audio_device_draw_scope(x, y, w, h);
+    else if (kind == AUDIO_SPECTRUM_KIND)      audio_device_draw_spectrum(x, y, w, h);
 }
 
 #if defined(__ANDROID__)
@@ -123,6 +126,8 @@ int main(void) {
 #endif
     SetTargetFPS(60);
 
+    audio_device_init(arena);
+
     GlobalState *global_state = (GlobalState *)Arena_alloc(arena, sizeof(GlobalState), __FILE__, __LINE__);
     global_state->total_time = 0.0f;
     global_state->frame_count = 0;
@@ -179,6 +184,7 @@ int main(void) {
     entities_lua_register(host, ecs, global_state);
     world_lua_register(host, global_state->world);
     local_chunk_lua_register(host, global_state->world);
+    synth_lua_register(host, audio_device_synth());
     ScriptHost_load_scene(host, "splash");
 
     FrameLoop loop = {
@@ -208,6 +214,7 @@ int main(void) {
     skinned_sprite_system_shutdown();
     TextureStore_shutdown();
     if (ui_font_loaded) UnloadFont(ui_fonts[0]);
+    audio_device_shutdown();
     CloseWindow();
     ECS_destroy(ecs);
     Arena_dispose(&global_state->frame_arena);

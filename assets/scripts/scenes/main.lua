@@ -6,9 +6,11 @@ local show_inv_popup = true
 local KEY_SPACE  = gramarye.input.key("space")
 local KEY_ESCAPE = gramarye.input.key("escape")
 local KEY_K      = gramarye.input.key("k")
+local KEY_A      = gramarye.input.key("a")
 
 local function goto_splash()  gramarye.scene.change("splash") end
 local function goto_planet()  gramarye.scene.change("planet") end
+local function goto_synth()   gramarye.scene.change("synth")  end
 local function push_pause()   gramarye.scene.push("pause")    end
 local function log_reload()   gramarye.log("reload pressed")  end
 
@@ -58,9 +60,14 @@ local function overview_panel()
                 label    = "Planet >",
                 on_click = goto_planet,
             },
+            ui.Button {
+                id       = "btn_synth",
+                label    = "Synth Lab >",
+                on_click = goto_synth,
+            },
         },
 
-        ui.Label { text = "space = splash   esc = pause   k = skin demo   F5 = reload script (desktop)", skin = "hint" },
+        ui.Label { text = "space = splash   esc = pause   k = skin demo   a = synth lab   F5 = reload script (desktop)", skin = "hint" },
     }
 end
 
@@ -209,6 +216,9 @@ return {
         end
         if gramarye.input.key_pressed(KEY_K) then
             gramarye.scene.change("skin_demo")
+        end
+        if tab ~= 3 and gramarye.input.key_pressed(KEY_A) then  -- tab 3 has a text box
+            gramarye.scene.change("synth")
         end
     end,
 

@@ -103,6 +103,7 @@ Notes:
 | `gramarye.draw.clear(r, g, b)` | |
 | `gramarye.time.total()` / `frames()` | accumulated sim time / sim tick count |
 | `gramarye.entities.*`, `gramarye.textures.load` | sprite entities, see below |
+| `gramarye.audio.*` | procedural sound synth, see below |
 
 ## Sprite entities (C-rendered)
 
@@ -123,6 +124,40 @@ gramarye.entities.despawn(e)
 `set_transform`/`set_sprite` update in place when the component exists, so
 per-frame moves from Lua do no ECS allocation. Entity handles are userdata,
 comparable with `==`. See `scenes/splash.lua` for the demo.
+
+## Procedural audio (`gramarye.audio`)
+
+A voice is described by one flat table; the C synth renders it on the audio
+thread. Any field left out takes its default (`gramarye.audio.defaults()`).
+See [src/services/audio/README.md](../src/services/audio/README.md) for the
+signal flow and every field.
+
+```lua
+local h = gramarye.audio.play {
+    wave = "saw", freq = 110,                       -- sine|triangle|square|pulse|saw
+    decay = 0.4, filter = "lp", cutoff = 600, filter_env = 3,
+}
+gramarye.audio.update(h, { ... })   -- retune a live voice (no retrigger)
+gramarye.audio.release(h)           -- start its release stage
+```
+
+| Function | Notes |
+|---|---|
+| `audio.play(desc)` | returns a handle, or `nil` if the command queue is full |
+| `audio.update(h, desc)` / `release(h)` / `stop_all()` | |
+| `audio.set_master(g)` / `master()` | 0..1.5 |
+| `audio.voices()` / `max_voices()` / `ready()` | `ready()` is false when no device opened |
+| `audio.defaults()` | default desc table, a starting point to edit |
+| `audio.WAVES` / `FILTERS` / `MAX_MODES` | name lists for UIs |
+| `audio.SCOPE_KIND` / `SPECTRUM_KIND` | `custom` UI node kinds that draw the output |
+
+Sound design lives in Lua: `lib/sfx.lua` holds materials (modal recipes),
+presets and the footstep generator (`sfx.play_footstep(foot, surface,
+{ weight, speed, pan })`). The `synth` scene (`a` from main) exposes every
+parameter; **Log patch** prints the current desc as Lua to paste into presets.
+
+Scenes using `widgets.Slider` must call `widgets.begin_frame()` at the top of
+`on_draw` (Clay's `on_click` fires on release, so press edges are tracked there).
 
 ## Performance notes for scripts
 
