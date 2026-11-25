@@ -1,206 +1,221 @@
 # Local Chunk Service
 
-`services/local_chunk` generates the fine-grained, walkable local map for a
-single planet hex (the "Xkm2 chunk group for a hex" from the original
-request). It is a **separate service from `services/world`**: it consumes
-World's read-only query surface (`world_planet()`, `world_fields()`,
-`world_seed()`) as plain parameters and has no `World*` in any of its own
-signatures. Nothing under `services/world` knows this file exists;
-`local_chunk_lua.c` is the only file that depends on both.
+`services/local_chunk` generates the fine-grained local guide raster for a
+single planet hex: the structured-random terrain the player's view is built
+from, at a target scale of roughly 15-50km per hex. It is a **separate
+service from `services/world`**: it consumes World's read-only query surface
+(`world_planet()`, `world_fields()`, `world_seed()`) as plain parameters and
+has no `World*` in any of its own signatures. Nothing under `services/world`
+knows this file exists; `local_chunk_lua.c` is the only file that depends on
+both.
 
 ## Contents
 
-- [Core idea: HEX = SQUARE](#core-idea-hex--square)
+- [Core idea: a field over the sphere, ownership by nearest center](#core-idea-a-field-over-the-sphere-ownership-by-nearest-center)
 - [Determinism rules](#determinism-rules)
 - [The pipeline](#the-pipeline)
-- [Staggered borders](#staggered-borders)
 - [File map](#file-map)
 - [Debug views](#debug-views)
 - [Known limitations](#known-limitations)
 - [How to extend](#how-to-extend)
 
-## Core idea: HEX = SQUARE
+## Core idea: a field over the sphere, ownership by nearest center
 
-The hex is a topological abstraction that exists **only** at the planet
-scale, to decide which square local-map chunks are adjacent and how their
-shared border behaves. The square chunk itself is not clipped to any hex
-shape -- it **is** the hex's entire walkable area, at a real-world target
-scale of roughly 15-50km per hex/chunk (enough hexes to build up to an
-earth-sized planet). The tangent-plane `extent` used throughout the code is
-currently just an abstract unit; wiring it to an actual km scale is not done
-yet.
+Everything a chunk rasterizes is a **pure function of world position** (plus
+the world seed and the coarse per-cell fields). The chunk is just a cached,
+north-up square window onto that field, centered on its cell. Because two
+chunks sampling the same physical point compute the same value, there is no
+seam to stitch. This is the "seamless world" model (cf. the RimExodus
+RimWorld mod): neighbors' terrain already exists beyond the border, and
+crossing it is a change of which cache you read, not a remap.
 
-An earlier version of this code point-in-polygon-clipped each square to the
-hex's inscribed polygon and dimmed the outside corners. That was wrong --
-removed. Don't reintroduce hex-shaped clipping of the local map.
+Two global, symmetric functions on the sphere carry the structure:
+
+- **Ownership** -- `local_chunk_owner_at()`: the cell whose center is nearest
+  to the point after a small noise warp (`local_chunk_border_warp()`). That's
+  a domain-warped spherical Voronoi diagram, i.e. the planet's own hex/pent
+  cells with organic instead of straight borders. The nearest search is a
+  greedy walk over `planet->neighbors`, so the answer is the true global
+  nearest and **does not depend on which cell asks** -- the `hint` argument
+  is only a starting point. Pentagons need no special case.
+- **Blending** -- `local_chunk_blend_at()`: barycentric weights over the
+  geodesic triangle (three cell centers; `planet->neighbors` is ring-ordered
+  so consecutive slots form the triangles) containing the warped point.
+  Coarse per-cell values interpolated with these weights are continuous
+  everywhere and exactly equal the coarse value at each cell center.
+
+Each chunk's square (`local_chunk_extent()`) covers its cell's farthest
+polygon corner **plus the maximum warp displacement**, so everything a cell
+can own fits inside its own raster. The rest of the square is an apron of
+neighbor-owned terrain (`owner[] != LOCAL_CHUNK_OWNER_SELF`) -- it's correct
+data, just not authoritative. Anything that must have exactly one home
+(player edits, placed structures, points of interest) belongs to the owner.
+
+An earlier version clipped each square to the hex's inscribed polygon and
+dimmed the corners, leaving dead area nobody owned; a later version kept the
+square as "the" hex area and invented a N/S half-tile brick stagger with a
+per-edge reciprocity check (~10% of edges disagreed). Both are gone. Don't
+reintroduce a shape that isn't a tessellation, or a per-edge rule that two
+sides can compute differently.
 
 ## Determinism rules
 
-The one property every stage in this pipeline must hold, because a hex can
-be generated starting from any of its neighbors and border tiles need to
-match up regardless of order:
+The one property every stage must hold, because a chunk can be generated
+starting from any of its neighbors:
 
-- **Interior-only data** (nothing about a neighbor): pure function of
-  `(world_seed, cell)`.
-- **Border-shared data** (elevation control value, river crossing point,
-  edge seed): pure function of the **unordered** cell pair
-  `{min(A,B), max(A,B)}` -- symmetric, so cell A computing it and cell B
-  computing it, in either order, with neither generated yet, produce
-  bit-identical results.
+- **Sampled data**: pure function of `(world_seed, world position)` and the
+  coarse `WorldFields`. Elevation, climate, ownership, and terrain are all
+  this kind.
+- **Border-shared data** (river crossing points, edge seeds): pure function
+  of the **unordered** cell pair -- `edge_midpoint()` is the midpoint of the
+  two corners common to both cells.
+- **Per-cell layout data** (river paths, future POIs): pure function of the
+  owning cell, computed in that cell's own north frame. Any chunk can
+  recompute a neighbor's layout without generating the neighbor -- that's how
+  `stage_rivers` draws neighbors' rivers into the apron.
 
-Where this is applied in `local_chunk.c`:
-- Per-cell seed: `hash3(cell, 0, 0, world_seed)`.
-- Edge seed: `hash3(min(A,B), max(A,B), 0, world_seed)`.
-- Elevation: not a per-cell or per-edge value at all -- see [The
-  pipeline](#the-pipeline) below. It's a continuous function of raw world
-  position, which is a stronger (and simpler) guarantee than symmetry over a
-  pair.
-- Shared-edge crossing point: `edge_midpoint()`, the midpoint of the two
-  triangle-corner points common to both cells' corner rings -- a function of
-  the unordered pair, not of "self" or "neighbor."
-
-A quick way to break this without noticing: adding any per-cell mutable
-cache that a neighbor's generation could observe before your own cell has
-run. Don't.
+A quick way to break this without noticing: a per-chunk parameter (tangent
+frame, extent, chunk seed) leaking into a sampled value. Rasterizing a
+neighbor's layout must use the *neighbor's* frame and extent, as
+`route_cell()` does.
 
 ## The pipeline
 
-Mirrors `services/world`'s own stage-array pattern
-(`world_pipeline.h`/`world_climate.c` etc.): `LocalChunkStage { name, run }`
-registered in a `STAGES[]` array in `local_chunk.c`, executed in order by
-`local_chunk_run()`. Adding a stage is one function + one array entry;
-nothing else changes.
+`LocalChunkStage { name, run }` entries in `STAGES[]`, run in order by
+`local_chunk_run()`. Adding a stage is one function + one array entry.
 
-1. **Elevation** -- samples the active `WorldGenerator.sample()` (the same
-   continuous, pure function of 3D position that produced the coarse
-   per-hex elevation in `world_gen.c`) directly at each fine-grid point's
-   actual world-space position (`generator_index` is threaded through from
-   `world_generator_index()`). Two adjacent hexes sampling the same physical
-   point get the identical value by construction -- no blending, no fading,
-   no seam to get wrong. An earlier version of this stage built its own
-   inverse-distance-weighted blend across a handful of control points with
-   fine `fbm` detail faded to zero at the boundary; that's why hexes used to
-   render as smooth "circle" blobs that didn't connect naturally across
-   borders. Don't reintroduce a local approximation here -- if the
-   generator's real terrain shape isn't detailed enough at this scale, add
-   another CONTINUOUS layer (see next paragraph), not a local reblend.
-
-   The generator's own `noise_scale` is tuned for continent-scale features
-   across the whole sphere, so at the size of one hex it barely varies --
-   sampling it alone gives smooth but too-simple coastlines (a near-straight
-   line, not natural bays/coves). A second, higher-frequency `fbm` layer is
-   added on top for local roughness, using the SAME rule as the coarse
-   sample: a pure function of raw world position with a fixed seed
-   (`world_seed + 9001`, distinguishing it from the coarse generator's own
-   octave seeds), no per-cell or per-hex parameter at all -- so it's
-   automatically seamless too, no fading needed. If borders still look too
-   smooth/simple, tune `kDetailFreq`/`kDetailAmp`/`kDetailOctaves` in
-   `stage_elevation` (or add a third such layer at a different frequency);
-   don't go back to a per-cell-seeded version.
-2. **Rivers** -- for each border the coarse hydrology pass flagged as
-   carrying flow, draws a path between the actual inflow/outflow crossing
-   points (never through the hex center unless this cell is a genuine
-   source/sink), meandering via the same `fbm` noise the elevation stage
-   uses, envelope-forced to exactly hit both crossing points.
-3. **Biome context** -- stub. The extension point for "a mountain tile
-   should look at its forest/desert/rainforest neighbors" -- not
-   implemented; see [How to extend](#how-to-extend).
-
-## Staggered borders
-
-The hex is flat-top oriented (6 sides: N, NE, SE, S, SW, NW -- no direct
-east/west side exists). N and S each border one neighbor with a **half-tile
-stagger** (a "brick" offset); the 4 diagonal sides border their neighbors
-cleanly, tile-boundary-to-tile-boundary.
-
-- `local_chunk_north_frame()`: projects the sphere's actual polar axis (+Y)
-  into a cell's tangent plane, giving a well-defined "local north" 2D
-  direction everywhere except exactly at the 2 pole cells.
-- `local_chunk_edge_role()`: classifies a neighbor slot as CLEAN or
-  STAGGERED (N/S), picking whichever neighbor is angularly closest to local
-  north/south. A sphere has no globally consistent "up" (hairy ball
-  theorem), so this can't have perfect global meaning everywhere -- what it
-  guarantees is **reciprocity**: a candidate staggered edge is only kept
-  staggered if both sides independently agree, otherwise it's forced to
-  CLEAN on both sides. `local_chunk_debug_check_reciprocity()` sweeps the
-  whole planet and logs how often that fallback fires (see [Known
-  limitations](#known-limitations) for the current number).
-- `local_chunk_cross_border()`: the actual tile-coordinate remap when
-  stepping across a border. Clean edges are 1:1. Staggered edges apply a
-  half-tile offset, with a symmetric tie-break (lower cell id = phase 0, the
-  other = phase 0.5) deciding who's out of phase. **Not generally
-  invertible** -- crossing back from the destination column doesn't
-  necessarily reproduce the original tile. That's inherent to a half-tile
-  brick stagger (a brick doesn't have a single "opposite" brick across a
-  running-bond seam either), not a bug.
+1. **Frame** -- north-up tangent frame (`local_chunk_north_frame()`) and
+   `extent`. Grid row 0 is north.
+2. **Fields** -- per grid point:
+   - elevation = active `WorldGenerator.sample()` at the point + a
+     **blended coarse residual** (`world.elevation[c] - sample(pos[c])` for
+     the three blend cells -- i.e. whatever tectonics/hydrology added on top
+     of the raw generator, smoothly interpolated) + a sub-cell `fbm` detail
+     layer (`world_seed + 9001`). The residual makes the fine terrain agree
+     with the coarse planet at cell centers; the detail gives coastlines bays
+     and coves. **Detail frequency and amplitude scale with the cell
+     spacing** (`kDetailCyclesPerCell`, `kDetailAmpPerSpacing`): with fixed
+     constants, at L8 the "detail" was coarser than a cell and acted as a
+     regional bias big enough to sink near-sea-level land cells entirely.
+     Never add a CONTINUOUS layer whose wavelength exceeds a cell unless the
+     coarse elevation already includes it, and never a per-cell-seeded one.
+   - temperature / humidity = blended coarse values + small `fbm` detail.
+   - `lake` = blended weight of the blend cells that hydrology marked
+     `TILE_TERRAIN_LAKE`, plus `fbm` edge noise. Lakes come from basin
+     filling, not from elevation vs. sea level (they sit above sea level, and
+     "grown" lake cells can sit above their own surface), so they can't be
+     recovered from the fine elevation -- they're blended like climate.
+3. **Ownership** -- `owner[]`: 0 = this cell, `1 + k` = neighbor slot `k`,
+   255 = a second-ring cell (only in the far apron corners).
+4. **Rivers** -- this cell's and every neighbor's rivers, each routed in its
+   owning cell's frame over a 32x32 sample of the local topography
+   (`route_build()`, same elevation function as `stage_fields`). Each stream
+   is a least-cost path (`route_search()`) from a shared edge crossing point
+   (or a high source point) toward the outflow crossing point: it prefers low
+   ground, pays heavily to climb, avoids ground other cells own, and gets a
+   noise term so it doesn't hug the obvious valley. It stops at the first
+   local water it reaches, so rivers end on the actual coastline rather than
+   the hex edge. Streams are routed largest-flow first and existing channels
+   are cheap to follow, so later inflows and 0-2 extra headwater streams
+   merge into them. Only cells on the global river network (`river > 0`)
+   route, and only from inflows that are themselves on it, so the local map
+   shows exactly the globe's network, connected end to end. `river_mask` holds
+   a level: 1 = minor headwater stream (faint), `1 + river width` for network
+   rivers. The first inflow carries the trunk at this cell's width; later ones
+   are tributaries at their own width. Level >= 4 is drawn 2px wide. Paths are jittered, Chaikin-smoothed and meandered
+   (wider swings on low ground, tapered to keep endpoints pinned), then
+   projected into this chunk's grid. Routes depend only on (world, cell), so
+   they match across borders. Tuning is the `kRoute*` / `kMeander*`
+   constants.
+5. **Biome** -- below sea level stays ocean/shallows; else `lake > 0.5` is
+   `TILE_TERRAIN_LAKE`; otherwise `tile_classify()`. River samples on any
+   water are cleared, so rivers end at lake shores and coasts. Classification
+   is `tile_classify()` per grid point on the fine elevation and
+   blended climate. A mountain hex next to a rainforest hex gets wetter
+   terrain toward that border because humidity is interpolated across it;
+   the warp makes the transition organic rather than hex-shaped.
 
 ## File map
 
 | File | Role |
 |---|---|
-| `local_chunk.h` / `local_chunk.c` | The service itself: pipeline, edge roles, cross-border remap, debug renders. No `World*` anywhere. |
+| `local_chunk.h` / `local_chunk.c` | The service: ownership/blend functions, pipeline, group view, debug renders. No `World*` anywhere. |
 | `local_chunk_lua.h` / `local_chunk_lua.c` | Composition glue + Lua bindings (`gramarye.local_chunk.*`). The only place that imports both `services/world` and `services/local_chunk`. |
-| `../world_noise.h` | Shared hash/value-noise primitives (also used by `world_gen.c`) -- local-chunk noise and world noise must use the identical hash, or a value computed on either side of a border could disagree. Don't fork a second copy. |
+| `../world_noise.h` | Shared hash/value-noise primitives (also used by `world_gen.c`). Don't fork a second copy. |
 
 ## Debug views
 
-Three renderers, all debug-only (none is the final production tile
-renderer):
+All debug-only, not the production renderer. Each group view is baked into
+textures once per `LocalChunkView` at creation, so switching views is free:
 
-- `local_chunk_draw_in_rect()` -- one hex's raw raster, auto-contrast
-  stretched. Cheapest, least meaningful across hexes (see limitations).
-- `local_chunk_draw_group_in_rect()` -- a whole `LocalChunkGroup`
-  (center + neighbors) composited as a hex-polygon mosaic, absolute
-  elevation color ramp. Useful for eyeballing cross-hex consistency; not
-  wired into `planet.lua`'s UI by default (`LOCAL_CHUNK_GROUP_DEBUG_KIND`).
-- `local_chunk_draw_square_in_rect()` -- one hex as a plain square grid,
-  north-up, staggered edges tinted, sample crossings marked.
-- `local_chunk_draw_connected_in_rect()` -- **the current default UI view**
-  (`LOCAL_CHUNK_DEBUG_KIND`). Center square plus up to 6 neighbor squares in
-  the standard flat-top-hex offset layout (N above, S below, 4 diagonals to
-  either side, all the same size), contiguous by construction.
+- `LOCAL_CHUNK_VIEW_TERRAIN` -- `TILE_TERRAIN_COLORS`, shaded by elevation.
+- `LOCAL_CHUNK_VIEW_TOPOGRAPHY` -- hypsometric tint, NW hillshade, contour
+  lines and a coastline. Contours and shading are on fixed scales (`kTopo*`:
+  elevation mapped to meters, 20m contours, every 5th darker) so they compare
+  across previews. The tint is intentionally stretched over the view's land
+  range for debugging, so a hex's color depends on which neighbors are open.
+
+To add a view: add an enum value before `LOCAL_CHUNK_VIEW_COUNT`, its name to
+`VIEW_NAMES`, and a `*_colors()` branch in `bake_group_view()`. The local map
+popup builds its button row from `gramarye.local_chunk.view_count/view_name`,
+so it picks the new view up with no Lua change.
+
+- `local_chunk_draw_in_rect()` -- one chunk's raw raster; the apron
+  (non-owned samples) is dimmed.
+- `local_chunk_draw_connected_in_rect()` -- **the default UI view**
+  (`LOCAL_CHUNK_DEBUG_KIND`). North-up view of the center cell and its ring;
+  each pixel reads from its owner's raster, with ownership borders drawn
+  faintly. If borders were wrong you'd see discontinuities here.
+- `local_chunk_draw_group_in_rect()` -- the same composite with the center
+  cell tinted instead of border lines (`LOCAL_CHUNK_GROUP_DEBUG_KIND`).
+
+The composite's pixel -> (tile, raster index) map is resolved once in
+`local_chunk_create_group()` (`view_tile` / `view_index`), so drawing is pure
+lookup. While building it, each pixel's owner is re-queried with the owner as
+hint; any disagreement (or an owned point falling outside its owner's
+raster) increments `owner_mismatches`, which the Lua glue logs. It should
+always be 0.
 
 ## Known limitations
 
-Being tracked here rather than fixed silently -- read before assuming
-either of these is resolved:
-
-- **Reciprocity fallback rate is not negligible.** Logged once at startup;
-  last measured 276/2700 (~10%) of candidate-staggered edges get forced to
-  CLEAN because the two sides' independent north/south picks disagree. The
-  north/south-picking heuristic in `pick_north_south_slot()` (nearest
-  neighbor by angle) is prone to near-ties; tightening it is real follow-up
-  work, not a rare edge case as originally assumed.
-- **km scale isn't wired up.** `extent` is an abstract tangent-plane unit;
-  nothing yet maps it to the intended ~15-50km per hex.
-- **Biome context stage is an empty stub.**
-- **Non-square (true flat-top aspect ratio) grid dimensions** and **actual
-  gameplay traversal using `local_chunk_cross_border()`** are both
-  explicitly out of scope so far.
+- **Apron overhead.** The square must contain the warped cell, so only ~25%
+  of each raster is owned. Shrinking `warp_amp()` raises that (the extent
+  shrinks with it automatically) at the cost of straighter borders.
+- **Cache key covers identity, not parameters.** `local_chunk_cache_key()`
+  packs `(world_seed, level, cell)` exactly into 64 bits (no hashing, so no
+  collisions; the same cell index at a different level is a different hex).
+  It does not cover generator index or slider params -- flush any cache on
+  regenerate.
+- **Scale is fixed per hex, not per planet.** `extent` is in unit-sphere
+  tangent units; `planet_radius_m()` converts it, with hexes ~30km across at
+  every level (L8 = Earth radius, each level down halves the radius).
+  `local_chunk_res_for_cell()` sizes each raster so one pixel is
+  `LOCAL_CHUNK_METERS_PER_PIXEL` (500m), giving ~100px rasters and a ~185px
+  composite. Generation cost scales with 1/mpp^2. The composite is baked into textures once at group creation.
+- **Second-ring cells' rivers** aren't drawn into the far apron corners.
+- **Gameplay traversal** (moving an entity between chunk caches) isn't
+  implemented; with this model it's just `local_chunk_owner_at()` on the
+  entity's world position.
 
 ## How to extend
 
-**Add a pipeline stage**: write a `static void stage_foo(LocalChunkFields *f)`
-in `local_chunk.c`, add `{ "Foo", stage_foo }` to the `STAGES[]` array. It
-runs after every earlier stage, in array order, so it can read anything they
-filled in (e.g. `f->elevation`, `f->river_mask`).
+**Add a pipeline stage**: write `static void stage_foo(LocalChunkFields *f)`
+in `local_chunk.c`, add `{ "Foo", stage_foo }` to `STAGES[]`.
 
-**Biome context (the actual next stage to write)**: read
-`f->neighbors[i].terrain` / `.humidity` / `.temperature` for each of this
-cell's neighbors and blend classification/detail near that specific border
-accordingly -- e.g. a mountain hex bordering a rainforest hex should look
-different near that edge than the same mountain hex bordering a desert.
-`f->self_terrain` is this cell's own coarse classification (from
-`world_gen.c`'s `tile_classify()`); this stage is where a FINER, per-tile
-terrain gets derived instead of using the one coarse value everywhere. Since
-`f->elevation` is now a real continuous surface, this is also where
-elevation-*change*-driven rules belong -- e.g. "steep elevation change near
-a coastline should be more cliff than beach": compute the gradient across
-`f->elevation` near the shore and let that ratio drive the classification,
-rather than a flat per-terrain rule. `f->neighbors[i].elevation` (the
-neighbor's coarse value) is a cheap first signal for this before computing
-an actual local gradient.
+**Add a coarse field to the fine raster**: blend it with
+`local_chunk_blend_at()` in `stage_fields` exactly like temperature.
 
-**Changing the noise/hash primitives**: edit `../world_noise.h` only, never
-duplicate them into this file -- `world_gen.c` depends on the exact same
-implementation.
+**Add linear features (roads, ridgelines, cliff bands)**: follow rivers --
+crossing points from the unordered cell pair, path built in the owner's
+frame, rasterized for self + neighbors.
+
+**Add point features (settlements, POIs)**: place them from the owning
+cell's `seed` only, so a neighbor can ask for the
+list without generating the cell, and draw any whose footprint reaches into
+the apron.
+
+**Slope-aware classification** (e.g. steep coast -> cliff, not beach): compute
+the gradient of `f->elevation` in a stage after Fields and feed it into the
+Biome stage.
+
+**Changing the noise/hash primitives**: edit `../world_noise.h` only.

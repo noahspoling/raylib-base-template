@@ -3,13 +3,9 @@
 #include "components/skinned_sprite.h"
 #include "components/sprite.h"
 #include "services/stores/texture_store.h"
+#include "services/mounts/mounts.h"
 #include "raylib.h"
 
-#if defined(__ANDROID__)
-#define ASSET_PREFIX ""
-#else
-#define ASSET_PREFIX "assets/"
-#endif
 
 #if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
 #define SKIN_GLSL_VERSION 100
@@ -56,8 +52,10 @@ static void skinned_sprite_system_update(ECS *ecs, float deltaTime, void *userDa
 
 SystemId skinned_sprite_system_register(ECS *ecs, GlobalState *state) {
     if (!g_shader_loaded) {
-        const char *fs = TextFormat(ASSET_PREFIX "shaders/glsl%d/skin.fs", SKIN_GLSL_VERSION);
-        g_skin_shader = LoadShader(0, fs);
+        char fs[MOUNTS_PATH_MAX];
+        if (Mounts_resolve(TextFormat("shaders/glsl%d/skin.fs", SKIN_GLSL_VERSION), fs, sizeof(fs)) >= 0) {
+            g_skin_shader = LoadShader(0, fs);
+        }
         if (g_skin_shader.id == 0) {
             TraceLog(LOG_WARNING, "SKIN: failed to load skin shader from '%s'", fs);
         } else {

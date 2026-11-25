@@ -700,6 +700,8 @@ static void build_river_mesh(World *w) {
         float lift = 1.0f + r + 0.001f;
         Vector3 a   = { p->pos[c].x, p->pos[c].y, p->pos[c].z };
         Vector3 b   = { p->pos[d].x, p->pos[d].y, p->pos[d].z };
+        if (w->elevation[d] < w->params.sea_level || w->terrain[d] == TILE_TERRAIN_LAKE)
+            b = Vector3Normalize(Vector3Lerp(a, b, 0.5f));
         Vector3 dir = Vector3Normalize(Vector3Subtract(b, a));
 
         Vector3 pL = {0}, pR = {0};

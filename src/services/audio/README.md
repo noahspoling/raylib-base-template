@@ -11,8 +11,8 @@ instead of picking from a pile of samples.
 | [synth.h](../../../include/services/audio/synth.h) / [synth.c](synth.c) | DSP + voice pool + command queue. Pure C, no raylib — testable offline |
 | [audio_device.c](audio_device.c) | raylib `AudioStream` callback, scope / spectrum debug views |
 | [synth_lua.c](synth_lua.c) | `gramarye.audio.*` bindings (desc table <-> `SynthVoiceDesc`) |
-| `assets/scripts/lib/sfx.lua` | materials, presets, footstep generator |
-| `assets/scripts/scenes/synth.lua` | the lab: every parameter on a slider |
+| `packages/core/scripts/lib/sfx.lua` | materials, presets, footstep generator |
+| `packages/core/scripts/scenes/synth.lua` | the lab: every parameter on a slider |
 
 ## Threading
 

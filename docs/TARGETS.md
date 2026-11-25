@@ -70,7 +70,7 @@ cd <project>/android
 ./gradlew installDebug         # deploy to a connected device
 ```
 
-Or open `<project>/android/` in Android Studio. Assets in `<project>/assets/` are packaged into the APK automatically (`assets.srcDirs` includes `../../assets`); raylib loads them through `AAssetManager` with paths relative to the assets root.
+Or open `<project>/android/` in Android Studio. The contents of `<project>/packages/` are packaged into the APK automatically (`assets.srcDirs` includes `../../packages`), so `engine/`, `core/` and `index.lua` sit at the APK assets root, which is where the Android mount stack looks. raylib reads them through `AAssetManager`. User mods aren't supported on Android (there's no mods folder to scan).
 
 Machine-specific notes:
 - `app/build.gradle.kts` passes `-DCMAKE_MAKE_PROGRAM=/usr/bin/ninja`; adjust if ninja lives elsewhere on your machine.
@@ -129,15 +129,23 @@ There is **no** `cmake --preset ios` in this repo. See **[mobile/README-ios.md](
 
 These used to be inline comments in `CMakeLists.txt`; kept here since the build script itself is now comment-free:
 
+- **Dev-only tools** (`src/dev`, `include/dev`, `dev/`) build only for desktop non-release (`GRAMARYE_DEV_TOOLS`). Nothing under them ships, and the whole feature can be deleted by removing those folders and that block.
+- **`BUILD_TESTS OFF` is set before any lib is fetched**: their `BUILD_TESTS` options default ON, and setting it later only takes effect on the second configure of a build dir.
+- **Content staging** (release builds, or running the build dir elsewhere): `packages/` and `mods/` are copied next to the binaries after **wiping the old copy first**. `copy_directory` never deletes, so a file removed from source would otherwise linger in the copy and still resolve (and shadow) through the mount stack.
+- **Android** (`android/app/build.gradle.kts`): the CMake path is relative to `app/` (`../../CMakeLists.txt`, the game root), and `assets.srcDirs` includes `../../packages`, whose contents land at the APK assets root, where the Android mount stack looks.
+
 - **`GRAMARYE_TARGET`** drives raylib's `PLATFORM` / `OPENGL_VERSION` and Gramarye's `BUILD_WEB`. Valid values: `desktop | web | android | macos_gles_angle`. iOS has no upstream raylib CMake `PLATFORM`; use `mobile/README-ios.md` instead.
 - **`GRAMARYE_GAME_THREADING`** (default `OFF`): the game loop is single-threaded, so libcore's locks default to compiled-out no-ops (`GRAMARYE_SYNC_SINGLE_THREADED` propagates to the ECS built in this tree). Flip it `ON` if the game grows real threads (e.g. async asset loading). Standalone `gramarye-ecs` builds/tests keep threading `ON` and stay fully tested independently of this flag.
 - **Lua 5.4** (scripting layer) is fetched via `walterschell/Lua`, which wraps the upstream sources in plain CMake so the active toolchain (NDK, Emscripten, desktop) applies as-is.
 - **`CMAKE_POLICY_VERSION_MINIMUM 3.5`**: upstream Lua declares `cmake_minimum_required(VERSION 3.1)`, which CMake 4+ refuses outright; this floor only applies to subprojects that declare an older minimum, so it's set globally before fetching.
 - **`GRAMARYE_UI_LUA`** enables Lua bindings in gramarye-ui (requires `lua_static`, fetched earlier in the same file). gramarye-ui itself is Clay UI and reuses the raylib target already fetched above — drop a local checkout into `libs/gramarye-ui` to skip the network fetch, same pattern as the other vendored libs.
-- **Asset staging** (`<project>/assets`) differs per target:
-  - desktop/macOS: symlinked next to the binary; `main.c` pins cwd to the exe dir. A symlink (not a copy) means editing source `assets/*.lua` is picked up immediately by F5 hot-reload (`ScriptHost_reload_current`) with no rebuild — a stale copy would silently shadow every edit. On Windows, `mklink` for directories needs elevation/Developer Mode, so the build copies the directory instead of symlinking.
-  - web: preloaded into MEMFS at `/assets`.
-  - android: packaged into the APK by Gradle (`assets.srcDirs` includes `../../assets`).
+- **Executables.** `src/` builds one static runtime library (`<name>_runtime`). On desktop it links into three thin executables from `apps/`: `<name>` (launcher), `<name>_game` and `<name>_editor`. Web and Android build one binary from `apps/single/`, where the launcher switches to game/editor in-process. Genre C libraries go in `GRAMARYE_NATIVE_LIBS` (see `docs/SCRIPTING.md`).
+- **Content location** (`<project>/packages`, `<project>/mods`) is decided by the mount stack (`src/services/mounts/mounts.c`), not by the working directory:
+  - dev builds (`GRAMARYE_DEV_TOOLS`, the default for desktop non-release): the absolute source paths are compiled in (`GRAMARYE_SOURCE_DIR`). Every way of starting the app (gdb, raddbg, `run_desktop.sh`, a double-click, any cwd) reads the same live source files, so F5 and the dev file watcher always see your edits. This also holds on Windows, where the build dir gets a copy.
+  - release desktop/macOS: `packages/` and `mods/` next to the executables. The build symlinks them from source (copies on Windows, where directory symlinks need elevation).
+  - web: `packages/` preloaded into MEMFS at `/packages`. No user mods.
+  - android: packaged into the APK root by Gradle (`assets.srcDirs` includes `../../packages`). No user mods.
+  - Writable data (`last_launch.lua`, future saves) goes to `user/`: the project's `user/` in dev builds (gitignored), next to the executable in release. Runtime data is never written into a package; the only exception is the editor saving maps into the package being edited (`<package>/maps/`).
 - **`-Wl,-z,max-page-size=16384`** (Android link options): required for Google Play on Android 15+, which mandates 16 KB-aligned LOAD segments.
 
 ## Android splash theme notes

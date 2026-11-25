@@ -191,6 +191,34 @@ void world_hydrology_run(WorldFields *f) {
     for (int32_t i = 0; i < n; i++)
         if (f->terrain[i] == TILE_TERRAIN_LAKE) f->river[i] = 0;
 
+    const uint8_t river_min_cells = 2;
+    uint8_t *up    = (uint8_t *)calloc((size_t)n, 1);
+    int32_t *stack = (int32_t *)malloc((size_t)n * sizeof(int32_t));
+    if (up && stack) {
+        for (int32_t k = ordn - 1; k >= 0; k--) {
+            int32_t c = order[k];
+            if (!f->river[c]) continue;
+            if (up[c] < 255) up[c]++;
+            int32_t d = f->downhill[c];
+            if (d >= 0 && f->river[d] && up[c] > up[d]) up[d] = up[c];
+        }
+        for (int32_t c = 0; c < n; c++) {
+            int32_t d = f->downhill[c];
+            if (!f->river[c] || (d >= 0 && f->river[d]) || up[c] >= river_min_cells) continue;
+            int32_t top = 0;
+            stack[top++] = c;
+            while (top > 0) {
+                int32_t x = stack[--top];
+                f->river[x] = 0;
+                for (int32_t k = 0; k < p->degree[x]; k++) {
+                    int32_t u = p->neighbors[x][k];
+                    if (u >= 0 && f->river[u] && f->downhill[u] == x && top < n) stack[top++] = u;
+                }
+            }
+        }
+    }
+    free(up); free(stack);
+
     free(fill);
     free(visited);
     free(order);

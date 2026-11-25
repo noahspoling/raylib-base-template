@@ -1,11 +1,11 @@
 # Local library checkouts (swap in a dev clone without committing it)
 libs/
 
-# Build outputs
+# Build outputs (anchored: an unanchored lib/ also ignored every scripts/lib/)
 build_*/
-out/
-bin/
-lib/
+/out/
+/bin/
+/lib/
 
 # CMake generated files
 CMakeCache.txt
@@ -23,3 +23,6 @@ Makefile
 # OS files
 .DS_Store
 Thumbs.db
+
+# Per-machine runtime data (launch selection, saves, logs)
+user/

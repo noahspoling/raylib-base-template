@@ -36,8 +36,21 @@ file(GLOB_RECURSE PROJECT_HEADERS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
 )
 
+if(GRAMARYE_TARGET STREQUAL "desktop" AND NOT CMAKE_BUILD_TYPE MATCHES "^(Release|MinSizeRel)$")
+    set(GRAMARYE_DEV_TOOLS_DEFAULT ON)
+else()
+    set(GRAMARYE_DEV_TOOLS_DEFAULT OFF)
+endif()
+option(GRAMARYE_DEV_TOOLS "Build dev-only tools such as the shader playground" ${GRAMARYE_DEV_TOOLS_DEFAULT})
+if(NOT GRAMARYE_DEV_TOOLS)
+    list(FILTER PROJECT_SOURCES EXCLUDE REGEX "/src/dev/")
+    list(FILTER PROJECT_HEADERS EXCLUDE REGEX "/include/dev/")
+endif()
+
 option(GRAMARYE_GAME_THREADING "Enable libcore sync primitives (real locks)" OFF)
 set(GRAMARYE_THREADING ${GRAMARYE_GAME_THREADING} CACHE BOOL "" FORCE)
+
+set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/libs/gramarye-libcore")
     set(FETCHCONTENT_SOURCE_DIR_GRAMARYE_LIBCORE "${CMAKE_SOURCE_DIR}/libs/gramarye-libcore" CACHE PATH "" FORCE)
@@ -51,7 +64,6 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(gramarye_libcore)
 
-set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
 if(EXISTS "${CMAKE_SOURCE_DIR}/libs/gramarye-ecs")
     set(FETCHCONTENT_SOURCE_DIR_GRAMARYE_ECS "${CMAKE_SOURCE_DIR}/libs/gramarye-ecs" CACHE PATH "" FORCE)
 endif()
@@ -127,54 +139,93 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(gramarye_ui)
 
-if(GRAMARYE_TARGET STREQUAL "android")
-    add_library(${GRAMARYE_APP_NAME} SHARED
-        ${PROJECT_SOURCES}
-        ${PROJECT_HEADERS}
-    )
-else()
-    add_executable(${GRAMARYE_APP_NAME}
-        ${PROJECT_SOURCES}
-        ${PROJECT_HEADERS}
-    )
-endif()
+set(GRAMARYE_NATIVE_LIBS "" CACHE STRING "Extra libraries linked into the runtime (genre C libs)")
 
-target_include_directories(${GRAMARYE_APP_NAME} PRIVATE
+set(RUNTIME_TARGET ${GRAMARYE_APP_NAME}_runtime)
+add_library(${RUNTIME_TARGET} STATIC
+    ${PROJECT_SOURCES}
+    ${PROJECT_HEADERS}
+)
+
+target_include_directories(${RUNTIME_TARGET} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${raylib_SOURCE_DIR}/src
 )
 
-target_link_libraries(${GRAMARYE_APP_NAME} PRIVATE
+target_compile_definitions(${RUNTIME_TARGET} PUBLIC
+    GRAMARYE_APP_NAME="${GRAMARYE_APP_NAME}"
+)
+
+if(GRAMARYE_DEV_TOOLS)
+    target_compile_definitions(${RUNTIME_TARGET} PUBLIC
+        GRAMARYE_DEV_TOOLS=1
+        GRAMARYE_DEV_DIR="${CMAKE_CURRENT_SOURCE_DIR}/dev/"
+        GRAMARYE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/"
+    )
+endif()
+
+target_link_libraries(${RUNTIME_TARGET} PUBLIC
     gramarye-libcore
     gramarye-ecs
     raylib
     lua_static
     gramarye-ui
+    ${GRAMARYE_NATIVE_LIBS}
 )
+
+set(APPS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/apps)
+
+if(GRAMARYE_TARGET STREQUAL "android")
+    add_library(${GRAMARYE_APP_NAME} SHARED ${APPS_DIR}/single/main.c)
+    set(GRAMARYE_APP_TARGETS ${GRAMARYE_APP_NAME})
+elseif(GRAMARYE_TARGET STREQUAL "web")
+    add_executable(${GRAMARYE_APP_NAME} ${APPS_DIR}/single/main.c)
+    set(GRAMARYE_APP_TARGETS ${GRAMARYE_APP_NAME})
+else()
+    add_executable(${GRAMARYE_APP_NAME}        ${APPS_DIR}/launcher/main.c)
+    add_executable(${GRAMARYE_APP_NAME}_game   ${APPS_DIR}/game/main.c)
+    add_executable(${GRAMARYE_APP_NAME}_editor ${APPS_DIR}/editor/main.c)
+    set(GRAMARYE_APP_TARGETS
+        ${GRAMARYE_APP_NAME} ${GRAMARYE_APP_NAME}_game ${GRAMARYE_APP_NAME}_editor)
+endif()
+
+foreach(app_target IN LISTS GRAMARYE_APP_TARGETS)
+    target_include_directories(${app_target} PRIVATE ${APPS_DIR})
+    target_link_libraries(${app_target} PRIVATE ${RUNTIME_TARGET})
+endforeach()
 
 if(GRAMARYE_TARGET STREQUAL "web")
     set_target_properties(${GRAMARYE_APP_NAME} PROPERTIES SUFFIX ".html")
     target_link_options(${GRAMARYE_APP_NAME} PRIVATE
         "-sALLOW_MEMORY_GROWTH=1"
-        "--preload-file=${CMAKE_CURRENT_SOURCE_DIR}/assets@assets"
+        "--preload-file=${CMAKE_CURRENT_SOURCE_DIR}/packages@packages"
         "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
     )
 elseif(NOT GRAMARYE_TARGET STREQUAL "android")
+    set(STAGE_DIR ${CMAKE_CURRENT_BINARY_DIR})
     if(WIN32)
-        add_custom_command(TARGET ${GRAMARYE_APP_NAME} POST_BUILD
+        add_custom_target(${GRAMARYE_APP_NAME}_stage ALL
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "${STAGE_DIR}/packages"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-                "$<TARGET_FILE_DIR:${GRAMARYE_APP_NAME}>/assets"
+                "${CMAKE_CURRENT_SOURCE_DIR}/packages" "${STAGE_DIR}/packages"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${STAGE_DIR}/mods"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/mods" "${STAGE_DIR}/mods"
         )
     else()
-        add_custom_command(TARGET ${GRAMARYE_APP_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E rm -rf
-                "$<TARGET_FILE_DIR:${GRAMARYE_APP_NAME}>/assets"
+        add_custom_target(${GRAMARYE_APP_NAME}_stage ALL
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "${STAGE_DIR}/assets"
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "${STAGE_DIR}/packages"
             COMMAND ${CMAKE_COMMAND} -E create_symlink
-                "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-                "$<TARGET_FILE_DIR:${GRAMARYE_APP_NAME}>/assets"
+                "${CMAKE_CURRENT_SOURCE_DIR}/packages" "${STAGE_DIR}/packages"
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "${STAGE_DIR}/mods"
+            COMMAND ${CMAKE_COMMAND} -E create_symlink
+                "${CMAKE_CURRENT_SOURCE_DIR}/mods" "${STAGE_DIR}/mods"
         )
     endif()
+    foreach(app_target IN LISTS GRAMARYE_APP_TARGETS)
+        add_dependencies(${app_target} ${GRAMARYE_APP_NAME}_stage)
+    endforeach()
 endif()
 
 if(GRAMARYE_TARGET STREQUAL "android")

@@ -274,8 +274,11 @@ view (see [world_pipeline.h](../../../include/services/world/world_pipeline.h)):
    hex center to its `downhill` neighbor's center, arc-subdivided and re-projected
    onto the sphere so it hugs the surface. Because every river cell adds its
    outgoing ribbon, the drainage tree forms **one continuous line** — tributaries
-   merging into fatter trunks — that **always runs into a water tile** (the segment
-   into the sea/lake is included, so no river ends randomly on land). Ribbon width
+   merging into fatter trunks — that **always runs into a water tile**. The mouth
+   segment stops at the shared border with the sea/lake hex instead of running on
+   to its center, so no ribbon lies over open water. River systems shorter than
+   `river_min_cells` (2) are dropped after lakes form, removing one-hex stubs that
+   drain straight into the sea along the coast. Ribbon width
    scales with Strahler order **and with cell size (~1/frequency)**, so a river
    stays ~1-2 cells wide at any resolution (a fixed width ballooned into blobs at
    high levels). Rivers look best at L6+; at L4 the
@@ -427,15 +430,15 @@ runs, so dragging stays responsive on the largest worlds.
 detail, resolution, **rain shadow**, **moisture**, and **rivers** (river
 density). Lakes have no row — they're derived, not tuned (see the hydrology
 water-balance rule above). All stage-on-release. The hosting Lua `custom` node must be tall enough (~280px in
-[planet.lua](../../../assets/scripts/scenes/planet.lua)); add a row by bumping
+[planet.lua](../../../packages/core/scripts/scenes/planet.lua)); add a row by bumping
 `WORLD_CTL_COUNT` and its parallel `labels`/`mins`/`maxs`/`is_level`/`cur` arrays
 and the commit `switch`.
 
 **Booleans and enums live in Lua, not the C slider panel** — a slider is the wrong
-control for them. [planet.lua](../../../assets/scripts/scenes/planet.lua) uses:
+control for them. [planet.lua](../../../packages/core/scripts/scenes/planet.lua) uses:
 
 - a **Checkbox** (`widgets.Checkbox`, a new reusable widget in
-  [lib/widgets.lua](../../../assets/scripts/lib/widgets.lua)) for
+  [lib/widgets.lua](../../../packages/engine/scripts/lib/widgets.lua)) for
   `enable_hydrology`, toggled via `gramarye.world.set_hydrology`;
 - a **View** cycle button that calls `gramarye.world.set_view(n)` (map modes:
   terrain / temperature / rainfall / flow / region), recoloring immediately;

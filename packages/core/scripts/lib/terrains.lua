@@ -1,0 +1,18 @@
+return {
+    { id = "water",  name = "Water",  color = { 52, 101, 164 },  noise = 0.3, foam = 3, water = true,
+      cliff = { 112, 104, 96 } },
+    { id = "lake",   name = "Lake",   color = { 46, 94, 146 },   noise = 0.25, foam = 2, foam_speed = 0.8, waves = 0.2,
+      water = true, cliff = { 112, 104, 96 } },
+    { id = "river",  name = "River",  color = { 64, 122, 180 },  noise = 0.2, foam = 1.5, foam_speed = 2, waves = 0.15,
+      flow = 22, water = true, cliff = { 112, 104, 96 } },
+    { id = "sand",   name = "Sand",   color = { 214, 192, 134 }, noise = 0.25, cliff = { 178, 146, 100 } },
+    { id = "riverbed", name = "Riverbed", image = "textures/terrain/riverbed.png", noise = 0.25,
+      cliff = { 120, 106, 82 } },
+    { id = "kelp",   name = "Kelp",   image = "textures/terrain/kelp.png", noise = 0.3, blades = 6, sway = 3,
+      sway_speed = 0.6, cliff = { 92, 84, 66 } },
+    { id = "dirt",   name = "Dirt",   color = { 128, 94, 62 },   noise = 0.2, cliff = { 104, 80, 60 } },
+    { id = "rock",   name = "Rock",   color = { 126, 122, 116 }, noise = 0.2, cliff = { 112, 106, 100 } },
+    { id = "grass",  name = "Grass",  color = { 86, 145, 64 },   noise = 0.15, blades = 3, sway = 1.5, sway_speed = 1.2,
+      cliff = { 120, 98, 76 } },
+    { id = "stairs", name = "Stairs", color = { 150, 142, 130 }, noise = 0, stairs = true, cliff = { 168, 158, 144 } },
+}

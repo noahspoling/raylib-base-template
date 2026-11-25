@@ -12,4 +12,6 @@ void local_chunk_lua_register(ScriptHost *host, World *world);
 
 const LocalChunkGroup *local_chunk_lua_current(void);
 
+int32_t local_chunk_lua_view(void);
+
 #endif

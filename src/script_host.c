@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "scene.h"
 #include "raylib.h"
+#include "services/mounts/mounts.h"
 
 #include "lua.h"
 #include "lualib.h"
@@ -9,12 +10,6 @@
 
 #include <stdio.h>
 #include <string.h>
-
-#if defined(__ANDROID__)
-#define ASSET_PREFIX ""
-#else
-#define ASSET_PREFIX "assets/"
-#endif
 
 #define SCRIPT_HOST_MAX_SYSTEMS 32
 #define SCRIPT_HOST_NAME_MAX 64
@@ -61,6 +56,9 @@ struct ScriptHost {
 
     bool script_error;
     char error_message[1024];
+
+    ScriptHostLoadedFile loaded[SCRIPT_HOST_MAX_TRACKED];
+    int32_t loaded_count;
 };
 
 static void set_error(ScriptHost *host, const char *msg) {
@@ -74,6 +72,23 @@ static int l_traceback(lua_State *L) {
     return 1;
 }
 
+#define WATCHDOG_SECONDS     3.0
+#define WATCHDOG_CHECK_EVERY 100000
+
+static double s_watchdog_deadline = 0.0;
+
+static void watchdog_arm(void) {
+    s_watchdog_deadline = GetTime() + WATCHDOG_SECONDS;
+}
+
+static void watchdog_hook(lua_State *L, lua_Debug *ar) {
+    (void)ar;
+    if (GetTime() > s_watchdog_deadline) {
+        luaL_error(L, "watchdog: script ran over %ds without returning "
+                      "(infinite loop or runaway recursion?)", (int)WATCHDOG_SECONDS);
+    }
+}
+
 static ScriptHost *host_from(lua_State *L) {
     lua_getfield(L, LUA_REGISTRYINDEX, HOST_REGISTRY_KEY);
     ScriptHost *host = (ScriptHost *)lua_touserdata(L, -1);
@@ -85,11 +100,30 @@ static SceneEntry *top(ScriptHost *host) {
     return host->depth > 0 ? &host->stack[host->depth - 1] : NULL;
 }
 
+static void track_loaded(ScriptHost *host, const char *rel, const char *path,
+                         int32_t mount, int32_t below) {
+    for (int32_t i = 0; i < host->loaded_count; i++) {
+        ScriptHostLoadedFile *f = &host->loaded[i];
+        if (strcmp(f->path, path) == 0 && f->below == below) {
+            f->mtime = GetFileModTime(path);
+            return;
+        }
+    }
+    if (host->loaded_count >= SCRIPT_HOST_MAX_TRACKED) return;
+    ScriptHostLoadedFile *f = &host->loaded[host->loaded_count++];
+    snprintf(f->rel, sizeof(f->rel), "%s", rel);
+    snprintf(f->path, sizeof(f->path), "%s", path);
+    f->mount = mount;
+    f->below = below;
+    f->mtime = GetFileModTime(path);
+}
+
 static void pcall_hook(ScriptHost *host, int32_t nargs) {
     lua_State *L = host->L;
     int32_t func_idx = lua_gettop(L) - nargs;
     lua_pushcfunction(L, l_traceback);
     lua_insert(L, func_idx);
+    watchdog_arm();
     if (lua_pcall(L, nargs, 0, func_idx) != LUA_OK) {
         set_error(host, lua_tostring(L, -1));
         lua_pop(L, 1);
@@ -118,7 +152,7 @@ static bool run_file(ScriptHost *host, const char *path) {
         set_error(host, msg);
         return false;
     }
-    char chunkname[224];
+    char chunkname[MOUNTS_PATH_MAX + 2];
     snprintf(chunkname, sizeof(chunkname), "@%s", path);
     int32_t rc = luaL_loadbuffer(L, text, strlen(text), chunkname);
     UnloadFileText(text);
@@ -129,6 +163,7 @@ static bool run_file(ScriptHost *host, const char *path) {
     }
     lua_pushcfunction(L, l_traceback);
     lua_insert(L, -2);
+    watchdog_arm();
     if (lua_pcall(L, 0, 1, -2) != LUA_OK) {
         set_error(host, lua_tostring(L, -1));
         lua_pop(L, 2);
@@ -159,9 +194,20 @@ static void entry_unref(ScriptHost *host, SceneEntry *entry) {
 static bool load_into_entry(ScriptHost *host, SceneEntry *entry, const char *name) {
     lua_State *L = host->L;
     entry->scene_ref = entry->update_ref = entry->draw_ref = LUA_NOREF;
+    if (entry->name != name) snprintf(entry->name, sizeof(entry->name), "%s", name);
 
-    char path[192];
-    snprintf(path, sizeof(path), "%sscripts/scenes/%s.lua", ASSET_PREFIX, name);
+    char rel[SCRIPT_HOST_NAME_MAX + 32];
+    snprintf(rel, sizeof(rel), "scripts/scenes/%s.lua", name);
+    char path[MOUNTS_PATH_MAX];
+    int32_t mount = Mounts_resolve(rel, path, sizeof(path));
+    if (mount < 0) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "scene '%s' not found: no mount has %s "
+                 "(see MOUNTS lines in the log)", name, rel);
+        set_error(host, msg);
+        return false;
+    }
+    track_loaded(host, rel, path, mount, INT32_MAX);
     if (!run_file(host, path)) return false;
 
     if (!lua_istable(L, -1)) {
@@ -172,7 +218,6 @@ static bool load_into_entry(ScriptHost *host, SceneEntry *entry, const char *nam
         return false;
     }
 
-    snprintf(entry->name, sizeof(entry->name), "%s", name);
     Scene_init(&entry->scene, entry->name);
 
     entry->update_ref = cache_hook_ref(L, "on_update");
@@ -238,6 +283,27 @@ static int l_log(lua_State *L) {
     return 0;
 }
 
+static int load_module(lua_State *L, const char *key, const char *rel,
+                       const char *path, int32_t mount, int32_t below) {
+    track_loaded(host_from(L), rel, path, mount, below);
+    char *text = LoadFileText(path);
+    if (!text) return luaL_error(L, "cannot read %s", path);
+    char chunkname[MOUNTS_PATH_MAX + 2];
+    snprintf(chunkname, sizeof(chunkname), "@%s", path);
+    int32_t rc = luaL_loadbuffer(L, text, strlen(text), chunkname);
+    UnloadFileText(text);
+    if (rc != LUA_OK) return lua_error(L);
+    lua_call(L, 0, 1);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushboolean(L, 1);
+    }
+    lua_pushvalue(L, -1);
+    lua_setfield(L, -3, key);
+    lua_remove(L, -2);
+    return 1;
+}
+
 static int l_require(lua_State *L) {
     const char *mod = luaL_checkstring(L, 1);
 
@@ -256,23 +322,54 @@ static int l_require(lua_State *L) {
     }
     lua_pop(L, 1);
 
-    char path[192];
-    snprintf(path, sizeof(path), "%sscripts/%s.lua", ASSET_PREFIX, mod);
-    char *text = LoadFileText(path);
-    if (!text) return luaL_error(L, "module '%s' not found (%s)", mod, path);
-    char chunkname[224];
-    snprintf(chunkname, sizeof(chunkname), "@%s", path);
-    int32_t rc = luaL_loadbuffer(L, text, strlen(text), chunkname);
-    UnloadFileText(text);
-    if (rc != LUA_OK) return lua_error(L);
-    lua_call(L, 0, 1);
-    if (lua_isnil(L, -1)) {
-        lua_pop(L, 1);
-        lua_pushboolean(L, 1);
+    char rel[256];
+    snprintf(rel, sizeof(rel), "scripts/%s.lua", mod);
+    char path[MOUNTS_PATH_MAX];
+    int32_t mount = Mounts_resolve(rel, path, sizeof(path));
+    if (mount < 0) return luaL_error(L, "module '%s' not found: no mount has %s", mod, rel);
+    return load_module(L, mod, rel, path, mount, INT32_MAX);
+}
+
+static int l_require_base(lua_State *L) {
+    const char *mod = luaL_checkstring(L, 1);
+    lua_Debug ar;
+    if (!lua_getstack(L, 1, &ar) || !lua_getinfo(L, "S", &ar) || ar.source[0] != '@') {
+        return luaL_error(L, "require_base('%s') must be called from a script file", mod);
     }
-    lua_pushvalue(L, -1);
-    lua_setfield(L, -3, mod);
-    lua_remove(L, -2);
+    int32_t caller = Mounts_index_of_path(ar.source + 1);
+    if (caller < 0) {
+        return luaL_error(L, "require_base('%s'): caller %s is not in any mount", mod, ar.source + 1);
+    }
+
+    char rel[256];
+    snprintf(rel, sizeof(rel), "scripts/%s.lua", mod);
+    char path[MOUNTS_PATH_MAX];
+    int32_t mount = Mounts_find_below(caller, rel, path, sizeof(path));
+    if (mount < 0) {
+        const Mount *m = Mounts_get(caller);
+        return luaL_error(L, "require_base('%s'): no mount below %s has %s",
+                          mod, m ? m->id : "?", rel);
+    }
+
+    char key[300];
+    snprintf(key, sizeof(key), "%s#%d", mod, (int)mount);
+    lua_getfield(L, LUA_REGISTRYINDEX, LOADED_REGISTRY_KEY);
+    lua_getfield(L, -1, key);
+    if (!lua_isnil(L, -1)) {
+        lua_remove(L, -2);
+        return 1;
+    }
+    lua_pop(L, 1);
+    return load_module(L, key, rel, path, mount, caller);
+}
+
+static int l_resolve(lua_State *L) {
+    char path[MOUNTS_PATH_MAX];
+    if (Mounts_resolve(luaL_checkstring(L, 1), path, sizeof(path)) < 0) {
+        lua_pushnil(L);
+    } else {
+        lua_pushstring(L, path);
+    }
     return 1;
 }
 
@@ -294,6 +391,13 @@ static int l_scene_pop(lua_State *L) {
 static int l_scene_current(lua_State *L) {
     SceneEntry *e = top(host_from(L));
     lua_pushstring(L, e ? e->name : "");
+    return 1;
+}
+
+static int l_scene_exists(lua_State *L) {
+    char rel[SCRIPT_HOST_NAME_MAX + 32], path[MOUNTS_PATH_MAX];
+    snprintf(rel, sizeof(rel), "scripts/scenes/%s.lua", luaL_checkstring(L, 1));
+    lua_pushboolean(L, Mounts_find(rel, path, sizeof(path)) >= 0);
     return 1;
 }
 
@@ -344,6 +448,12 @@ static int32_t key_from_name(const char *name) {
         {"left", KEY_LEFT}, {"right", KEY_RIGHT}, {"up", KEY_UP}, {"down", KEY_DOWN},
         {"lshift", KEY_LEFT_SHIFT}, {"rshift", KEY_RIGHT_SHIFT},
         {"lctrl", KEY_LEFT_CONTROL}, {"rctrl", KEY_RIGHT_CONTROL},
+        {"lalt", KEY_LEFT_ALT}, {"ralt", KEY_RIGHT_ALT},
+        {"delete", KEY_DELETE}, {"home", KEY_HOME}, {"end", KEY_END},
+        {"pageup", KEY_PAGE_UP}, {"pagedown", KEY_PAGE_DOWN},
+        {"minus", KEY_MINUS}, {"equal", KEY_EQUAL},
+        {"lbracket", KEY_LEFT_BRACKET}, {"rbracket", KEY_RIGHT_BRACKET},
+        {"comma", KEY_COMMA}, {"period", KEY_PERIOD}, {"slash", KEY_SLASH},
     };
     for (size_t i = 0; i < sizeof(named) / sizeof(named[0]); i++) {
         if (strcmp(named[i].n, name) == 0) return named[i].k;
@@ -380,6 +490,23 @@ static int l_input_key_down(lua_State *L) {
 static int l_input_mouse_pressed(lua_State *L) {
     int32_t button = (int32_t)luaL_optinteger(L, 1, MOUSE_BUTTON_LEFT);
     lua_pushboolean(L, IsMouseButtonPressed(button));
+    return 1;
+}
+
+static int l_input_mouse_down(lua_State *L) {
+    int32_t button = (int32_t)luaL_optinteger(L, 1, MOUSE_BUTTON_LEFT);
+    lua_pushboolean(L, IsMouseButtonDown(button));
+    return 1;
+}
+
+static int l_input_mouse_released(lua_State *L) {
+    int32_t button = (int32_t)luaL_optinteger(L, 1, MOUSE_BUTTON_LEFT);
+    lua_pushboolean(L, IsMouseButtonReleased(button));
+    return 1;
+}
+
+static int l_input_wheel(lua_State *L) {
+    lua_pushnumber(L, GetMouseWheelMove());
     return 1;
 }
 
@@ -468,6 +595,8 @@ static void install_bindings(lua_State *L) {
     static const luaL_Reg root_fns[] = {
         {"log", l_log},
         {"require", l_require},
+        {"require_base", l_require_base},
+        {"resolve", l_resolve},
         {NULL, NULL}
     };
     static const luaL_Reg scene_fns[] = {
@@ -476,6 +605,7 @@ static void install_bindings(lua_State *L) {
         {"pop", l_scene_pop},
         {"current", l_scene_current},
         {"depth", l_scene_depth},
+        {"exists", l_scene_exists},
         {NULL, NULL}
     };
     static const luaL_Reg systems_fns[] = {
@@ -488,6 +618,9 @@ static void install_bindings(lua_State *L) {
         {"key_pressed", l_input_key_pressed},
         {"key_down", l_input_key_down},
         {"mouse_pressed", l_input_mouse_pressed},
+        {"mouse_down", l_input_mouse_down},
+        {"mouse_released", l_input_mouse_released},
+        {"wheel", l_input_wheel},
         {"mouse_pos", l_input_mouse_pos},
         {"touch_pos", l_input_touch_pos},
         {NULL, NULL}
@@ -511,8 +644,6 @@ static void install_bindings(lua_State *L) {
 
     lua_newtable(L);
     luaL_setfuncs(L, root_fns, 0);
-    lua_pushstring(L, ASSET_PREFIX);
-    lua_setfield(L, -2, "asset_prefix");
     install_module(L, "scene", scene_fns);
     install_module(L, "systems", systems_fns);
     install_module(L, "input", input_fns);
@@ -536,6 +667,7 @@ ScriptHost *ScriptHost_new(Arena_T arena, ECS *ecs, GlobalState *global_state) {
     host->L = luaL_newstate();
     luaL_openlibs(host->L);
     lua_gc(host->L, LUA_GCGEN, 0, 0);
+    lua_sethook(host->L, watchdog_hook, LUA_MASKCOUNT, WATCHDOG_CHECK_EVERY);
 
     lua_pushlightuserdata(host->L, host);
     lua_setfield(host->L, LUA_REGISTRYINDEX, HOST_REGISTRY_KEY);
@@ -617,13 +749,42 @@ void ScriptHost_request_pop(ScriptHost *host) {
     host->pending = PENDING_POP;
 }
 
+void ScriptHost_clear_modules(ScriptHost *host) {
+    if (!host) return;
+    lua_newtable(host->L);
+    lua_setfield(host->L, LUA_REGISTRYINDEX, LOADED_REGISTRY_KEY);
+    host->loaded_count = 0;
+}
+
+void ScriptHost_unload_all(ScriptHost *host) {
+    if (!host) return;
+    while (host->depth > 0) {
+        SceneEntry *e = top(host);
+        call_hook0(host, e, "on_exit");
+        entry_unref(host, e);
+        host->depth--;
+    }
+    host->pending = PENDING_NONE;
+    host->script_error = false;
+    host->error_message[0] = '\0';
+    Arena_free(host->scene_arena);
+}
+
+int32_t ScriptHost_loaded_count(ScriptHost *host) {
+    return host ? host->loaded_count : 0;
+}
+
+const ScriptHostLoadedFile *ScriptHost_loaded_get(ScriptHost *host, int32_t index) {
+    if (!host || index < 0 || index >= host->loaded_count) return NULL;
+    return &host->loaded[index];
+}
+
 bool ScriptHost_reload_current(ScriptHost *host) {
     SceneEntry *e = host ? top(host) : NULL;
     if (!e) return false;
     TraceLog(LOG_INFO, "SCRIPT: reloading scene '%s'", e->name);
 
-    lua_newtable(host->L);
-    lua_setfield(host->L, LUA_REGISTRYINDEX, LOADED_REGISTRY_KEY);
+    ScriptHost_clear_modules(host);
 
     char name[SCRIPT_HOST_NAME_MAX];
     snprintf(name, sizeof(name), "%s", e->name);
@@ -634,6 +795,12 @@ bool ScriptHost_reload_current(ScriptHost *host) {
     host->error_message[0] = '\0';
 
     if (!load_into_entry(host, e, name)) return false;
+    if (host->loaded_count > 0) {
+        const ScriptHostLoadedFile *f = &host->loaded[0];
+        const Mount *m = Mounts_get(f->mount);
+        TraceLog(LOG_INFO, "SCRIPT: '%s' from mount [%d] %s (%s)",
+                 name, (int)f->mount, m ? m->id : "?", f->path);
+    }
     call_hook0(host, e, "on_enter");
     return !host->script_error;
 }

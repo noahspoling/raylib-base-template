@@ -2,12 +2,12 @@
 
 [script_host.h](../include/script_host.h) / [script_host.c](script_host.c) is
 the bridge between the C engine and Lua. It owns the Lua VM, the scene stack,
-and the `gramarye` binding table; it is the thing `main.c` drives every frame
+and the `gramarye` binding table; it is the thing `app.c` drives every frame
 and the thing scenes (Lua) talk to via `gramarye.*`.
 
 This document explains the C-side implementation. For the Lua-author-facing
 scene contract and API table, see [docs/SCRIPTING.md](../docs/SCRIPTING.md) —
-that is the reference to hand to someone writing `assets/scripts/`; this one
+that is the reference to hand to someone writing `packages/*/scripts/`; this one
 is for someone changing `script_host.c` itself.
 
 ## Contents
@@ -25,7 +25,8 @@ is for someone changing `script_host.c` itself.
 ## Responsibilities
 
 - Own the single `lua_State` for the game's lifetime.
-- Load scene files (`assets/scripts/scenes/<name>.lua`) and run their
+- Load scene files (`scripts/scenes/<name>.lua`, resolved through the mount
+  stack) and run their
   `on_enter/on_update/on_draw/on_exit/on_pause/on_resume` hooks.
 - Maintain the **scene stack** (`change`/`push`/`pop`), deferring transitions
   requested from Lua until a safe point.
@@ -37,7 +38,9 @@ is for someone changing `script_host.c` itself.
   bulk/hot-path work stays in C systems.
 - Catch every Lua error via `lua_pcall` + traceback so a script bug degrades
   to an on-screen error screen instead of crashing the game, and support
-  hot-reloading the current scene (F5 on desktop).
+  hot-reloading the current scene (F5 on desktop, plus the dev file watcher).
+- Record every script file it loaded, with the mount it came from
+  (`ScriptHost_loaded_*`), so the dev watcher can redo the same lookup.
 
 ## Data structures
 
@@ -71,7 +74,7 @@ struct ScriptHost {
   (`on_enter/on_exit/on_pause/on_resume`) are looked up by name each time
   they fire since they only fire on transitions.
 - **`RegisteredSystem`** — a name → `SystemId` mapping, populated by
-  `ScriptHost_register_system` (usually called from `main.c` at startup) so
+  `ScriptHost_register_system` (usually called from `app.c` at startup) so
   `gramarye.systems.add("name")` can resolve to a real system.
 - Two arena tiers live here: `arena` is the engine-lifetime allocation the
   `ScriptHost` itself was allocated from; `scene_arena` is exposed via
@@ -92,7 +95,7 @@ ScriptHost_new(arena, ecs, global_state)
     -> stash the host pointer + an empty module cache in the registry
     -> install_bindings()                      // the gramarye table
 
-ScriptHost_register_system(host, name, id)     // once per system, from main.c
+ScriptHost_register_system(host, name, id)     // once per system, from app.c
 ScriptHost_register_function(host, module, name, fn)  // optional extra bindings
 
 ScriptHost_load_scene(host, "splash")          // == do_change, the first scene
@@ -170,11 +173,17 @@ MEMFS, and the Android APK) and compiled+run with `luaL_loadbuffer` +
 (`l_require`) go through it, so there is exactly one error-handling path for
 "couldn't read/compile/run a script file."
 
-`ASSET_PREFIX` is `""` on Android (APK asset paths are already relative to
-the assets root) and `"assets/"` everywhere else (assets sit next to the
-binary). It's also exposed to Lua as `gramarye.asset_prefix` so the shared
-`gramarye-ui` Lua layer can build matching texture paths without knowing the
-platform.
+Paths are never built by hand. Every script lookup goes through the mount
+stack ([services/mounts/mounts.h](../include/services/mounts/mounts.h)):
+`scripts/scenes/<name>.lua` and `scripts/<mod>.lua` are resolved against each
+mounted package from the top down, and the first match wins. That's how a mod
+overrides a file. The chunk name is the resolved absolute path, so tracebacks
+show which package a file came from, and `require_base` can tell which mount
+its caller lives in. A missing file logs every root it tried (`MOUNTS:` lines).
+
+Lua resolves non-script resources the same way with `gramarye.resolve(rel)`,
+which returns a full path or nil. `gramarye.textures.load` resolves its
+argument itself. `gramarye.asset_prefix` no longer exists.
 
 ## The `gramarye` table
 
@@ -190,9 +199,17 @@ implementation details:
 - `gramarye.require(mod)` (`l_require`) special-cases the `gramarye.*`
   namespace: those modules ship embedded in the `gramarye-ui` binary via
   `package.preload`, so they're resolved through Lua's own `require` with no
-  filesystem access. Everything else is loaded from
-  `assets/scripts/<mod>.lua` and cached in the registry's
+  filesystem access. Everything else is resolved as `scripts/<mod>.lua`
+  through the mount stack (`load_module`) and cached in the registry's
   `LOADED_REGISTRY_KEY` table (cleared on reload, see below).
+- `gramarye.require_base(mod)` (`l_require_base`) loads the same path from
+  the next mount *below* the calling file. The caller's mount comes from
+  `lua_getinfo` on the chunk name. It's cached under `"<mod>#<mount>"`, so it
+  never collides with the plain `require` entry. This is what lets a mod wrap
+  a base module instead of copying it.
+- `gramarye.scene.exists(name)` is a silent lookup, so a scene can show
+  buttons only for scenes the current app mounts (the editor's tilemap
+  editor isn't in the game).
 - `gramarye.input.*` accepts either a key **name** string (resolved once via
   `key_from_name`, a small name→raylib-`KEY_*` table plus the obvious
   letter/digit shortcuts) or a numeric id returned by `gramarye.input.key`,
@@ -208,7 +225,7 @@ implementation details:
 ## Extending from C
 
 ```c
-// Make a C system addressable by name (call once, e.g. from main.c setup):
+// Make a C system addressable by name (call once, e.g. from app.c setup):
 ScriptHost_register_system(host, "physics", physics_system_register(ecs, state));
 // -> gramarye.systems.add("physics") from any scene's on_enter
 
@@ -243,7 +260,15 @@ bindings).
   below the stack top; they're only reclaimed at the next full `change`.
 - **Reload (`ScriptHost_reload_current`) clears the module cache** but not
   `package.preload` — embedded `gramarye.*` modules are baked into the
-  binary and are never hot-reloaded, only game-local `scripts/**.lua`.
+  binary and are never hot-reloaded, only package `scripts/**.lua`. Because
+  the cache is cleared, every module is re-resolved, so a mod override
+  added since the last load wins after the reload.
+- **A scene's name is stored before its file runs.** If loading fails, F5 and
+  the watcher still know which scene to retry. Before this, a load error left
+  the entry nameless and only a scene change could recover.
+- **`ScriptHost_unload_all` + `ScriptHost_clear_modules`** are what
+  single-binary builds use to switch app mode in-process: exit every scene
+  against the old mounts, rebuild the stack, then load the new home scene.
 - **`SCRIPT_HOST_MAX_STACK` (8) and `SCRIPT_HOST_MAX_SYSTEMS` (32)** are
   fixed-size arrays in the struct, not dynamic; both failure paths just log
   a warning and no-op rather than allocate.

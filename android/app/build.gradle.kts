@@ -24,8 +24,6 @@ android {
         }
     }
 
-    // Points to the game's CMakeLists.txt one level up from android/.
-    // Path is relative to this app/ directory: app/ -> ../  -> android/ -> ../../ -> game root.
     externalNativeBuild {
         cmake {
             path = file("../../CMakeLists.txt")
@@ -45,8 +43,7 @@ android {
 
     sourceSets {
         getByName("main") {
-            // ../../assets = <game root>/assets, shared with desktop/web builds.
-            assets.srcDirs("src/main/assets", "../../assets")
+            assets.srcDirs("src/main/assets", "../../packages")
         }
     }
 }

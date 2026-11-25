@@ -3,6 +3,7 @@
 #include "components/sprite.h"
 #include "components/skinned_sprite.h"
 #include "services/stores/texture_store.h"
+#include "services/mounts/mounts.h"
 #include "raylib.h"
 
 #include "lua.h"
@@ -10,11 +11,6 @@
 
 #include <string.h>
 
-#if defined(__ANDROID__)
-#define ASSET_PREFIX ""
-#else
-#define ASSET_PREFIX "assets/"
-#endif
 
 static const char *ENTITY_MT = "gramarye.entity";
 static const char *ECS_REGISTRY_KEY = "gramarye.entities.ecs";
@@ -160,7 +156,9 @@ static int l_entities_set_skinned_sprite(lua_State *L) {
 
 static const char *asset_path(lua_State *L, int32_t idx) {
     const char *rel = luaL_checkstring(L, idx);
-    lua_pushfstring(L, "%s%s", ASSET_PREFIX, rel);
+    char path[MOUNTS_PATH_MAX];
+    if (Mounts_resolve(rel, path, sizeof(path)) < 0) return rel;
+    lua_pushstring(L, path);
     return lua_tostring(L, -1);
 }
 

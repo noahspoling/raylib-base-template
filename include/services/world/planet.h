@@ -10,6 +10,9 @@
 
 #define PLANET_MAX_DEGREE 6
 
+#define PLANET_EARTH_LEVEL    8
+#define PLANET_EARTH_RADIUS_M 6371000.0f
+
 typedef struct { float x, y, z; } PlanetV3;
 
 typedef struct Planet {
@@ -33,6 +36,10 @@ Planet *planet_rebuild(Planet *p, int32_t level);
 void planet_destroy(Planet *p);
 
 int32_t planet_cell_count_for_level(int32_t level);
+
+static inline float planet_radius_m(const Planet *p) {
+    return PLANET_EARTH_RADIUS_M * (float)p->frequency / (float)(1 << PLANET_EARTH_LEVEL);
+}
 
 static inline float planet_cell_latitude(const Planet *p, int32_t cell) {
     return p->pos[cell].y;
