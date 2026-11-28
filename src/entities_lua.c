@@ -162,13 +162,23 @@ static const char *asset_path(lua_State *L, int32_t idx) {
     return lua_tostring(L, -1);
 }
 
+/* textures.load(path) or textures.load(name, path); a lone path is also the name. */
 static int l_textures_load(lua_State *L) {
-    lua_pushinteger(L, TextureStore_load(asset_path(L, 1)));
+    int32_t path_idx = lua_gettop(L) >= 2 ? 2 : 1;
+    const char *name = luaL_checkstring(L, 1);
+    lua_pushinteger(L, TextureStore_load(name, asset_path(L, path_idx)));
     return 1;
 }
 
 static int l_textures_register(lua_State *L) {
-    lua_pushinteger(L, TextureStore_register(asset_path(L, 1)));
+    int32_t path_idx = lua_gettop(L) >= 2 ? 2 : 1;
+    const char *name = luaL_checkstring(L, 1);
+    lua_pushinteger(L, TextureStore_register(name, asset_path(L, path_idx)));
+    return 1;
+}
+
+static int l_textures_find(lua_State *L) {
+    lua_pushinteger(L, TextureStore_find(luaL_checkstring(L, 1)));
     return 1;
 }
 
@@ -206,6 +216,7 @@ void entities_lua_register(ScriptHost *host, ECS *ecs, GlobalState *state) {
     ScriptHost_register_function(host, "entities", "set_skinned_sprite", l_entities_set_skinned_sprite);
     ScriptHost_register_function(host, "textures", "load", l_textures_load);
     ScriptHost_register_function(host, "textures", "register", l_textures_register);
+    ScriptHost_register_function(host, "textures", "find", l_textures_find);
     ScriptHost_register_function(host, "textures", "acquire", l_textures_acquire);
     ScriptHost_register_function(host, "textures", "release", l_textures_release);
 }

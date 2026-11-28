@@ -1,5 +1,6 @@
 #include "components/tile.h"
 #include <stdint.h>
+#include "table.h"
 
 const Color TILE_TERRAIN_COLORS[TILE_TERRAIN_COUNT] = {
     [TILE_TERRAIN_OCEAN]   = {  28,  62, 128, 255 },

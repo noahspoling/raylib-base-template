@@ -1111,7 +1111,7 @@ bool Tilemap_raycast(const Tilemap *m, Vector3 o, Vector3 dir, float max_dist, i
 static void load_tileset_textures(TilemapTileset *t) {
     char path[MOUNTS_PATH_MAX];
     if (Mounts_resolve(t->image, path, sizeof(path)) >= 0) {
-        t->texture = TextureStore_load(path);
+        t->texture = TextureStore_load(t->image, path);
         Texture2D tex = TextureStore_get(t->texture);
         if (tex.id != 0) {
             t->cols = (int16_t)(tex.width / t->tile_w);
@@ -1124,7 +1124,7 @@ static void load_tileset_textures(TilemapTileset *t) {
         }
     }
     if (t->skin[0] && Mounts_resolve(t->skin, path, sizeof(path)) >= 0) {
-        t->skin_texture = TextureStore_load(path);
+        t->skin_texture = TextureStore_load(t->skin, path);
     }
 }
 

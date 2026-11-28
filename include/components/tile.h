@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "raylib.h"
+#include "table.h"
 
 typedef enum {
     TILE_TERRAIN_OCEAN = 0,

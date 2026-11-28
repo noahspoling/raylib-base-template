@@ -256,7 +256,7 @@ static int l_list(lua_State *L) {
 static Texture2D sprite_texture(const char *rel) {
     char path[MOUNTS_PATH_MAX];
     if (Mounts_resolve(rel, path, sizeof(path)) < 0) return (Texture2D){ 0 };
-    int32_t id = TextureStore_register(path);
+    int32_t id = TextureStore_register(rel, path);
     if (id && !TextureStore_is_resident(id)) TextureStore_acquire(id);
     return TextureStore_get(id);
 }
